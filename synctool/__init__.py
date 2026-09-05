@@ -1,0 +1,18 @@
+"""synctool — synchronize shared tool folders across local Python projects.
+
+This package is organised in small, single-purpose layers:
+
+* ``models``  — pure data structures (Project / Group / SyncStats / SyncError)
+* ``ignore``  — gitignore-style path matching
+* ``logger``  — minimal append-only file logger used for the sync history
+* ``config``  — YAML loading, validation and group selection
+* ``engine``  — the sync engine (full scan + single event propagation)
+* ``watcher`` — watchdog observer wrapper with debounce (watch mode)
+* ``cli``     — argument parsing and command entry points
+
+Run it with ``python -m synctool`` or through the ``sync_tool.py`` shim.
+"""
+
+__version__ = "0.2.0"
+
+from .models import Group, Project, SyncError, SyncStats  # noqa: F401
