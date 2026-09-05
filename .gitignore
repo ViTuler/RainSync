@@ -1,5 +1,4 @@
 /.pytest_cache
 /.vscode
-/conftest.py
 /output
 /__pycache__
