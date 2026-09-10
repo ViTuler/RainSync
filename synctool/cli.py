@@ -14,7 +14,7 @@ from pathlib import Path
 from watchdog.observers import Observer
 
 from . import __version__
-from .config import Config, default_config_path, validate_groups
+from .config import Config, default_config_path, ensure_config_exists, validate_groups
 from .engine import SyncEngine
 from .logger import setup_logging
 from .watcher import GroupWatcher
@@ -261,6 +261,9 @@ def cmd_sync(args: argparse.Namespace) -> int:
     log = setup_logging()
     log.msg("SYNC_START")
 
+    # Ensure config exists; create example if missing
+    ensure_config_exists(args.config)
+
     config = Config.load(args.config)
     groups = config.select(args.group)
     validate_groups(groups)
@@ -318,6 +321,9 @@ def cmd_watch(args: argparse.Namespace) -> int:
             return 1
 
     log.msg("WATCH_START")
+
+    # Ensure config exists; create example if missing
+    ensure_config_exists(args.config)
 
     config = Config.load(args.config)
     groups = config.select(args.group)

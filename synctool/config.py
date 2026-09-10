@@ -202,3 +202,79 @@ def _as_auto_walk(value: Any, group_name: str) -> int | None:
     if isinstance(value, int) and value >= 0:
         return value
     raise SyncError(f"Group '{group_name}': auto_walk must be true/false or a non-negative integer")
+
+
+def _generate_example_config_content() -> str:
+    """Return an example configuration YAML content as a string."""
+    return """# RainSync Configuration
+# This file defines synchronization groups for your projects.
+
+groups:
+  # Example group: synchronize a shared tools folder across two projects
+  example_group:
+    # The folder to sync across projects (relative to each project)
+    target_folder: .tools
+
+    # List of projects to synchronize (minimum 2 required)
+    projects:
+      - name: project_a
+        path: ~/projects/project_a
+        # Optional: patterns to ignore when syncing
+        ignore:
+          - "*.pyc"
+          - __pycache__
+          - .pytest_cache
+
+      - name: project_b
+        path: ~/projects/project_b
+        ignore:
+          - "*.pyc"
+          - __pycache__
+
+    # Optional: allow deletion of files in target folder (default: false)
+    allow_delete: false
+
+    # Optional: auto-walk depth for detecting tool changes
+    # false/0: only check target folder root (default)
+    # true/null: search entire project tree
+    # N: search up to N folder levels deep
+    auto_walk: false
+
+    # Optional: perform initial sync on startup (default: true)
+    init_sync: true
+
+    # Optional: watch interval in seconds (default: 0.3)
+    watch:
+      interval: 0.3
+"""
+
+
+def ensure_config_exists(path: Path | None = None) -> Path:
+    """Check if config file exists; if not, create an example and notify user.
+
+    Args:
+        path: Config file path. If None, uses default_config_path().
+
+    Returns:
+        The config file path (created or existing).
+
+    Raises:
+        SyncError: If config needs to be created but writing fails.
+    """
+    if path is None:
+        path = default_config_path()
+    else:
+        path = Path(path)
+
+    if path.exists():
+        return path
+
+    # Config doesn't exist; create an example
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as fh:
+            fh.write(_generate_example_config_content())
+    except OSError as exc:
+        raise SyncError(f"Failed to create example config at '{path}': {exc}") from exc
+
+    return path
