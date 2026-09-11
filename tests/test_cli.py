@@ -1,5 +1,6 @@
 import os
 import sys
+from argparse import Namespace
 from pathlib import Path
 
 from synctool import cli
@@ -111,4 +112,107 @@ def test_daemon_lock_replaces_stale(tmp_path, monkeypatch):
 
     assert cli._acquire_daemon_lock(lock) is None
     assert int(lock.read_text(encoding="utf-8")) == os.getpid()
+
+
+def test_cmd_init_creates_example_config(tmp_path):
+    config_path = tmp_path / "sync_config.yaml"
+    args = Namespace(config=str(config_path), force=False)
+
+    code = cli.cmd_init(args)
+
+    assert code == 0
+    assert config_path.exists()
+
+
+def test_cmd_init_does_not_overwrite_without_force(tmp_path):
+    config_path = tmp_path / "sync_config.yaml"
+    config_path.write_text("groups: {}\n", encoding="utf-8")
+    args = Namespace(config=str(config_path), force=False)
+
+    code = cli.cmd_init(args)
+
+    assert code == 0
+    assert config_path.read_text(encoding="utf-8") == "groups: {}\n"
+
+
+def test_wait_for_daemon_detects_early_exit(monkeypatch):
+    # A daemon that died during startup must not be reported as started.
+    monkeypatch.setattr(cli, "_pid_is_running", lambda pid: False)
+    assert cli._wait_for_daemon(4242, grace=0.2) is False
+
+
+def test_wait_for_daemon_accepts_surviving_child(monkeypatch):
+    monkeypatch.setattr(cli, "_pid_is_running", lambda pid: True)
+    assert cli._wait_for_daemon(4242, grace=0.2) is True
+
+
+def test_newest_error_ignores_lines_from_before(tmp_path):
+    log = tmp_path / "sync.log"
+    log.write_text(
+        "2026-01-01 00:00:00 | ERROR | detail=stale failure\n"
+        "2026-01-01 00:00:01 | WATCH_START\n",
+        encoding="utf-8",
+    )
+
+    # Lines 0-1 predate the current attempt -> no fresh reason.
+    assert cli._newest_error(log, after_line=2) is None
+
+    with log.open("a", encoding="utf-8") as fh:
+        fh.write("2026-01-01 00:00:02 | ERROR | detail=project path is missing\n")
+
+    assert cli._newest_error(log, after_line=2) == "project path is missing"
+
+
+def test_report_failure_logs_error_and_notifies(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv(cli.DAEMONIZED_ENV, raising=False)
+    monkeypatch.setattr(cli, "_CONSOLE_AVAILABLE", True)
+
+    notified = []
+    monkeypatch.setattr(cli, "_notify", lambda kind, message: notified.append((kind, message)))
+
+    cli._report_failure("boom")
+
+    assert notified == [("warning", "boom")]
+    logged = (tmp_path / "sync.log").read_text(encoding="utf-8")
+    assert "ERROR" in logged
+    assert "detail=boom" in logged
+
+
+def test_report_failure_is_silent_in_daemon_child(tmp_path, monkeypatch):
+    # The detached daemon has no user to talk to; the launcher reports instead.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(cli.DAEMONIZED_ENV, "1")
+
+    notified = []
+    monkeypatch.setattr(cli, "_notify", lambda kind, message: notified.append(kind))
+
+    cli._report_failure("boom")
+
+    assert notified == []
+    assert "detail=boom" in (tmp_path / "sync.log").read_text(encoding="utf-8")
+
+
+def test_daemon_launcher_reports_early_exit(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv(cli.DAEMONIZED_ENV, raising=False)
+    monkeypatch.setattr(cli, "_lock_owner", lambda lock: None)
+    monkeypatch.setattr(cli, "_spawn_daemon", lambda: 4242)
+    monkeypatch.setattr(cli, "_wait_for_daemon", lambda pid, grace=0: False)
+
+    notified = []
+    monkeypatch.setattr(cli, "_notify", lambda kind, message: notified.append(message))
+
+    args = Namespace(
+        command="watch",
+        group=[],
+        config=str(tmp_path / "sync_config.yaml"),
+        daemon=True,
+        dry_run=False,
+        verbose=False,
+    )
+    code = cli.cmd_watch(args)
+
+    assert code == 1
+    assert notified and "exited immediately" in notified[0]
 

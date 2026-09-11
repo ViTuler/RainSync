@@ -70,6 +70,10 @@ def format_line(event: str, fields: dict) -> str:
     return " | ".join(parts)
 
 
-def setup_logging(log_file: Path = DEFAULT_LOG_FILE) -> Logger:
-    """Create the shared logger used by the CLI and the sync engine."""
-    return Logger(log_file)
+def setup_logging(log_file: Path | None = None) -> Logger:
+    """Create the shared logger used by the CLI and the sync engine.
+
+    The default path is resolved per call so it follows the current working
+    directory — the config file and the log live side by side.
+    """
+    return Logger(log_file if log_file is not None else Path.cwd() / "sync.log")

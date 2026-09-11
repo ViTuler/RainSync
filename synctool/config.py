@@ -154,7 +154,8 @@ def validate_groups(groups: Iterable[Group]) -> None:
         for project in group.projects:
             if not project.path.exists() or not project.path.is_dir():
                 raise SyncError(
-                    f"Group '{group.name}': project path is not an existing directory: {project.path}"
+                    f"Group '{group.name}': project path is not an existing directory: {project.path}\n"
+                    f"Edit the config file so every project points at a real folder."
                 )
 
 
@@ -249,27 +250,20 @@ groups:
 """
 
 
-def ensure_config_exists(path: Path | None = None) -> Path:
-    """Check if config file exists; if not, create an example and notify user.
+def create_example_config(path: Path | None = None, overwrite: bool = False) -> bool:
+    """Create an example config file.
 
-    Args:
-        path: Config file path. If None, uses default_config_path().
-
-    Returns:
-        The config file path (created or existing).
-
-    Raises:
-        SyncError: If config needs to be created but writing fails.
+    Returns True when a file was written, False when it already existed and
+    ``overwrite`` is False.
     """
     if path is None:
         path = default_config_path()
     else:
         path = Path(path)
 
-    if path.exists():
-        return path
+    if path.exists() and not overwrite:
+        return False
 
-    # Config doesn't exist; create an example
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as fh:
@@ -277,4 +271,16 @@ def ensure_config_exists(path: Path | None = None) -> Path:
     except OSError as exc:
         raise SyncError(f"Failed to create example config at '{path}': {exc}") from exc
 
+    return True
+
+
+def ensure_config_exists(path: Path | None = None) -> Path:
+    """Backward-compatible helper: create a missing config file if needed."""
+    if path is None:
+        path = default_config_path()
+    else:
+        path = Path(path)
+
+    if not path.exists():
+        create_example_config(path, overwrite=False)
     return path

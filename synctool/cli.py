@@ -11,10 +11,8 @@ import tempfile
 import time
 from pathlib import Path
 
-from watchdog.observers import Observer
-
 from . import __version__
-from .config import Config, default_config_path, ensure_config_exists, validate_groups
+from .config import Config, create_example_config, default_config_path, validate_groups
 from .engine import SyncEngine
 from .logger import setup_logging
 from .watcher import GroupWatcher
@@ -256,17 +254,104 @@ def _stop_hint() -> str:
     return "kill the process (e.g. Task Manager / taskkill /PID <pid> /F)"
 
 
+#: How long the daemon launcher waits for proof that the child survived.
+DAEMON_STARTUP_GRACE = 1.5
+
+
+def _wait_for_daemon(pid: int, grace: float = DAEMON_STARTUP_GRACE) -> bool:
+    """True when the detached watcher is still alive after ``grace`` seconds.
+
+    A packaged (windowed) build has no console, so a daemon that dies during
+    startup would otherwise be reported to the user as a successful start.
+    """
+    deadline = time.monotonic() + grace
+    while time.monotonic() < deadline:
+        if not _pid_is_running(pid):
+            return False
+        time.sleep(0.1)
+    return _pid_is_running(pid)
+
+
+def _log_failure(message: str) -> Path | None:
+    """Append one ``ERROR`` line to the log file; return its path."""
+    try:
+        logger = setup_logging()
+        logger.msg("ERROR", detail=" ".join(message.split()))
+        return logger.path
+    except OSError:
+        return None
+
+
+def _report_failure(message: str) -> None:
+    """Report a fatal error from the CLI boundary.
+
+    Without this an uncaught exception in a windowed (``--noconsole``) build
+    is written to a devnull stream and the process simply disappears.  The
+    detached daemon stays quiet: the launcher that spawned it reports the
+    failure once it notices the early exit.
+    """
+    _log_failure(message)
+    if os.environ.get(DAEMONIZED_ENV) == "1":
+        return
+    _notify("warning", message)
+
+
+def _log_line_count(log_file: Path) -> int:
+    """Number of lines currently in ``log_file`` (0 when it is missing)."""
+    try:
+        return len(Path(log_file).read_text(encoding="utf-8").splitlines())
+    except OSError:
+        return 0
+
+
+def _newest_error(log_file: Path, after_line: int) -> str | None:
+    """Message of the newest ``ERROR`` line written after ``after_line``."""
+    try:
+        lines = Path(log_file).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+
+    marker = " | ERROR | "
+    for line in reversed(lines[after_line:]):
+        index = line.find(marker)
+        if index >= 0:
+            detail = line[index + len(marker):]
+            if detail.startswith("detail="):
+                detail = detail[len("detail="):]
+            return detail or None
+    return None
+
+
+def _discard_stale_lock(lock: Path) -> None:
+    """Delete ``lock`` when the daemon it points at is no longer running."""
+    if _lock_owner(lock) is None:
+        try:
+            lock.unlink()
+        except OSError:
+            pass
+
+
 # ------------------------------------------------------------------ commands
+def cmd_init(args: argparse.Namespace) -> int:
+    path = Path(args.config)
+    created = create_example_config(path, overwrite=args.force)
+
+    if created:
+        print(f"Created example config at: {path}")
+    else:
+        print(f"Config already exists at: {path}")
+        print("Use --force to overwrite it with the example template.")
+    return 0
+
+
 def cmd_sync(args: argparse.Namespace) -> int:
     log = setup_logging()
-    log.msg("SYNC_START")
-
-    # Ensure config exists; create example if missing
-    ensure_config_exists(args.config)
 
     config = Config.load(args.config)
     groups = config.select(args.group)
     validate_groups(groups)
+
+    log.msg("SYNC_START")
 
     exit_code = 0
     for group in groups:
@@ -283,6 +368,14 @@ def cmd_sync(args: argparse.Namespace) -> int:
 
 
 def cmd_watch(args: argparse.Namespace) -> int:
+    try:
+        from watchdog.observers import Observer
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "watchdog is required for the watch command. "
+            "Install dependencies in your active environment (for example, conda env 'tool')."
+        ) from exc
+
     log = setup_logging()
 
     daemon_mode = bool(getattr(args, "daemon", False))
@@ -298,10 +391,23 @@ def cmd_watch(args: argparse.Namespace) -> int:
                                f"Not starting another one.\n\nStop it with:\n{_stop_hint()}")
             return 1
 
+        before = _log_line_count(log.path)
         try:
             pid = _spawn_daemon()
         except OSError as exc:
             _notify("warning", f"Could not start the background watcher:\n{exc}")
+            return 1
+
+        # A packaged build has no console, so a daemon that dies during
+        # startup must be detected here rather than reported as started.
+        if not _wait_for_daemon(pid):
+            _discard_stale_lock(lock)
+            reason = _newest_error(log.path, before)
+            detail = f"\n\nReason: {reason}" if reason else ""
+            _report_failure(
+                f"The background watcher exited immediately (pid {pid}).{detail}\n\n"
+                f"Log: {log.path}"
+            )
             return 1
 
         _notify("info", f"Background watcher started (pid {pid}).\n\n"
@@ -320,14 +426,11 @@ def cmd_watch(args: argparse.Namespace) -> int:
                                f"This instance is exiting.")
             return 1
 
-    log.msg("WATCH_START")
-
-    # Ensure config exists; create example if missing
-    ensure_config_exists(args.config)
-
     config = Config.load(args.config)
     groups = config.select(args.group)
     validate_groups(groups)
+
+    log.msg("WATCH_START")
 
     observers: list = []
     watchers: list[GroupWatcher] = []
@@ -404,6 +507,11 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     watch.set_defaults(func=cmd_watch)
 
+    init = sub.add_parser("init", help="Create an example config file in the current folder")
+    init.add_argument("-c", "--config", default=str(default_config_path()), help="Config YAML path")
+    init.add_argument("-f", "--force", action="store_true", help="Overwrite existing config file")
+    init.set_defaults(func=cmd_init)
+
     return parser
 
 
@@ -415,16 +523,23 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    # Backward-compatible convenience: `sync -d` == sync once, then watch in
-    # the FOREGROUND (this is distinct from `watch -d`, which daemonizes).
-    if args.command == "sync" and getattr(args, "daemon", False):
-        code = cmd_sync(args)
-        if code != 0:
-            return code
-        args.daemon = False
-        return cmd_watch(args)
-
     try:
+        # Backward-compatible convenience: `sync -d` == sync once, then watch
+        # in the FOREGROUND (distinct from `watch -d`, which daemonizes).
+        if args.command == "sync" and getattr(args, "daemon", False):
+            code = cmd_sync(args)
+            if code != 0:
+                return code
+            args.daemon = False
+            return cmd_watch(args)
+
         return args.func(args)
     except KeyboardInterrupt:
         return 130
+    except RuntimeError as exc:
+        # SyncError (config / usage problems) and other domain errors.
+        _report_failure(str(exc))
+        return 1
+    except Exception as exc:  # noqa: BLE001 - last-resort CLI boundary
+        _report_failure(f"Unexpected {type(exc).__name__}: {exc}")
+        return 1
