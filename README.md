@@ -41,9 +41,21 @@ python sync_tool.py --version
 python sync_tool.py --help
 ```
 
-`python -m synctool <command>` is equivalent. By default the config is read
-from `./sync_config.yaml` and the log is written to `./sync.log` in the
-current working directory.
+`python -m synctool <command>` is equivalent. When `-c/--config` is omitted
+the tool looks for `sync_config.yaml` in this order:
+
+1. the **working folder** (where you ran the command);
+2. the **tool folder** (next to the executable, or the project root when run
+   from source).
+
+When neither location has a config, one is created next to the tool. The log
+is **always** written to `sync.log` next to the tool, no matter where you run
+it from.
+
+```text
+A\sync_tool.exe        <- tool folder: config is created here, log always here
+B\                     <- run from here: a sync_config.yaml in B takes priority
+```
 
 ### Background watching (`watch -d`)
 
@@ -112,8 +124,9 @@ winner.
 
 ## Logging
 
-Every operation is appended to a single `sync.log` file (in the working
-directory) as pipe-separated lines:
+Every operation is appended to a single `sync.log` file, always located next
+to the tool itself (the folder holding the executable, or the project root
+when run from source). Lines are pipe-separated:
 
 ```text
 2026-09-05 10:20:42 | WATCH_START

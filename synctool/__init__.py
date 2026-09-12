@@ -4,6 +4,7 @@ This package is organised in small, single-purpose layers:
 
 * ``models``  — pure data structures (Project / Group / SyncStats / SyncError)
 * ``ignore``  — gitignore-style path matching
+* ``paths``   — where the tool lives: config search order + log location
 * ``logger``  — minimal append-only file logger used for the sync history
 * ``config``  — YAML loading, validation and group selection
 * ``engine``  — the sync engine (full scan + single event propagation)

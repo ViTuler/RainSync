@@ -4,6 +4,7 @@ from pathlib import Path
 
 from synctool.config import Config
 from synctool.models import SyncError
+from synctool.paths import app_config_path, resolve_config_path
 
 
 def write_config(tmp_path, text: str):
@@ -117,6 +118,26 @@ group:
 """)
     with pytest.raises(SyncError):
         Config.load(path)
+
+
+# ------------------------------------------------ config search order
+def test_resolve_prefers_working_folder(tmp_path, monkeypatch):
+    # A config in the folder the tool is run from wins over the tool's own.
+    monkeypatch.chdir(tmp_path)
+    local = write_config(tmp_path, "groups: {g: {}}\n")
+    assert resolve_config_path() == local
+
+
+def test_resolve_falls_back_to_tool_folder(tmp_path, monkeypatch):
+    # Nothing in the working folder -> use the config next to the tool.
+    monkeypatch.chdir(tmp_path)
+    assert resolve_config_path() == app_config_path()
+
+
+def test_resolve_honours_explicit_path(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    explicit = tmp_path / "custom.yaml"
+    assert resolve_config_path(str(explicit)) == explicit
 
 
 def test_duplicate_project_name_raises(tmp_path):

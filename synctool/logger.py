@@ -13,8 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from threading import Lock
 
-#: Where logs go when the CLI does not override it.
-DEFAULT_LOG_FILE = Path.cwd() / "sync.log"
+from .paths import app_log_path
 
 #: Event fields that may appear in a line, in display order.
 _ORDERED = ("group", "file")
@@ -73,7 +72,10 @@ def format_line(event: str, fields: dict) -> str:
 def setup_logging(log_file: Path | None = None) -> Logger:
     """Create the shared logger used by the CLI and the sync engine.
 
-    The default path is resolved per call so it follows the current working
-    directory — the config file and the log live side by side.
+    The log ALWAYS lives next to the tool itself -- the folder holding the
+    packaged executable, or the project root when run from source -- so the
+    history stays put no matter which folder the command was run from.  The
+    default path is resolved per call so a frozen build picks up the real
+    executable location.
     """
-    return Logger(log_file if log_file is not None else Path.cwd() / "sync.log")
+    return Logger(log_file if log_file is not None else app_log_path())

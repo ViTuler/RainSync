@@ -14,8 +14,8 @@ from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
 from .models import Group, Project, SyncError
+from .paths import DEFAULT_CONFIG_NAME, app_config_path, resolve_config_path
 
-DEFAULT_CONFIG_NAME = "sync_config.yaml"
 DEFAULT_INTERVAL = 0.3
 
 #: Human readable description of the supported keys (used in error messages).
@@ -160,7 +160,13 @@ def validate_groups(groups: Iterable[Group]) -> None:
 
 
 def default_config_path() -> Path:
-    return Path.cwd() / DEFAULT_CONFIG_NAME
+    """Config path the tool falls back to.
+
+    Delegates to :func:`synctool.paths.resolve_config_path`, so callers get
+    the full search order: an existing config in the working folder, then one
+    next to the tool, then the tool's own folder for a fresh config.
+    """
+    return resolve_config_path()
 
 
 # ----------------------------------------------------------------- helpers
@@ -257,7 +263,7 @@ def create_example_config(path: Path | None = None, overwrite: bool = False) -> 
     ``overwrite`` is False.
     """
     if path is None:
-        path = default_config_path()
+        path = app_config_path()
     else:
         path = Path(path)
 
@@ -277,7 +283,7 @@ def create_example_config(path: Path | None = None, overwrite: bool = False) -> 
 def ensure_config_exists(path: Path | None = None) -> Path:
     """Backward-compatible helper: create a missing config file if needed."""
     if path is None:
-        path = default_config_path()
+        path = app_config_path()
     else:
         path = Path(path)
 

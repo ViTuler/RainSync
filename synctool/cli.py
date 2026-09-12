@@ -12,12 +12,20 @@ import time
 from pathlib import Path
 
 from . import __version__
-from .config import Config, create_example_config, default_config_path, validate_groups
+from .config import Config, create_example_config, resolve_config_path, validate_groups
 from .engine import SyncEngine
 from .logger import setup_logging
+from .paths import DEFAULT_CONFIG_NAME
 from .watcher import GroupWatcher
 
 APP_NAME = "synctool"
+
+#: Help text shared by every ``-c/--config`` option.
+_CONFIG_HELP = (
+    "Config YAML path (default: the config found in the working folder, "
+    f"else one next to the tool, else a new '{DEFAULT_CONFIG_NAME}' created "
+    "next to the tool)"
+)
 
 #: Set in the environment of the daemon child so it does not re-spawn itself.
 DAEMONIZED_ENV = "SYNCTOOL_DAEMONIZED"
@@ -332,8 +340,31 @@ def _discard_stale_lock(lock: Path) -> None:
 
 
 # ------------------------------------------------------------------ commands
+def _resolve_config(args: argparse.Namespace) -> Path:
+    """Return the config file to use, creating one when none exists.
+
+    Search order (see ``paths.resolve_config_path``): an explicit ``-c`` path,
+    then the folder the command was run from, then the folder the tool itself
+    lives in.  When neither implicit location holds a config, a fresh one is
+    created next to the tool so a packaged executable keeps working after being
+    copied somewhere new.
+
+    ``args.config`` is normalized to the resolved path so later steps (daemon
+    re-spawn, lock naming) all agree on the same file.
+    """
+    explicit = getattr(args, "config", None)
+    path = resolve_config_path(explicit)
+
+    if explicit is None and not path.exists():
+        create_example_config(path, overwrite=False)
+        print(f"Created example config at: {path}")
+
+    args.config = str(path)
+    return path
+
+
 def cmd_init(args: argparse.Namespace) -> int:
-    path = Path(args.config)
+    path = resolve_config_path(getattr(args, "config", None))
     created = create_example_config(path, overwrite=args.force)
 
     if created:
@@ -347,7 +378,8 @@ def cmd_init(args: argparse.Namespace) -> int:
 def cmd_sync(args: argparse.Namespace) -> int:
     log = setup_logging()
 
-    config = Config.load(args.config)
+    config_path = _resolve_config(args)
+    config = Config.load(config_path)
     groups = config.select(args.group)
     validate_groups(groups)
 
@@ -377,6 +409,10 @@ def cmd_watch(args: argparse.Namespace) -> int:
         ) from exc
 
     log = setup_logging()
+
+    # Resolve (and, when missing, create) the config BEFORE any daemon work so
+    # both the launcher and the detached child agree on the same file.
+    config_path = _resolve_config(args)
 
     daemon_mode = bool(getattr(args, "daemon", False))
     is_daemon_child = os.environ.get(DAEMONIZED_ENV) == "1"
@@ -426,7 +462,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
                                f"This instance is exiting.")
             return 1
 
-    config = Config.load(args.config)
+    config = Config.load(config_path)
     groups = config.select(args.group)
     validate_groups(groups)
 
@@ -492,7 +528,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sync = sub.add_parser("sync", help="Synchronize all configured groups immediately")
     sync.add_argument("group", nargs="*", help="Optional group name(s)")
-    sync.add_argument("-c", "--config", default=str(default_config_path()), help="Config YAML path")
+    sync.add_argument("-c", "--config", default=None, help=_CONFIG_HELP)
     sync.add_argument("-d", "--daemon", action="store_true", help="Sync once, then watch for changes")
     sync.add_argument("--dry-run", action="store_true", help="Show changes without modifying files")
     sync.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
@@ -500,15 +536,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     watch = sub.add_parser("watch", help="Watch all configured projects and propagate changes")
     watch.add_argument("group", nargs="*", help="Optional group name(s)")
-    watch.add_argument("-c", "--config", default=str(default_config_path()), help="Config YAML path")
+    watch.add_argument("-c", "--config", default=None, help=_CONFIG_HELP)
     watch.add_argument("-d", "--daemon", action="store_true",
                        help="Run the watcher as a detached background process")
     watch.add_argument("--dry-run", action="store_true", help="Show changes without modifying files")
     watch.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     watch.set_defaults(func=cmd_watch)
 
-    init = sub.add_parser("init", help="Create an example config file in the current folder")
-    init.add_argument("-c", "--config", default=str(default_config_path()), help="Config YAML path")
+    init = sub.add_parser("init", help="Create an example config file the tool will use")
+    init.add_argument("-c", "--config", default=None, help=_CONFIG_HELP)
     init.add_argument("-f", "--force", action="store_true", help="Overwrite existing config file")
     init.set_defaults(func=cmd_init)
 

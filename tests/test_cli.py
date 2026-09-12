@@ -4,6 +4,7 @@ from argparse import Namespace
 from pathlib import Path
 
 from synctool import cli
+from synctool import logger as sync_logger
 
 
 def test_daemon_env_strips_pyi_vars_when_frozen(monkeypatch):
@@ -167,6 +168,8 @@ def test_report_failure_logs_error_and_notifies(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv(cli.DAEMONIZED_ENV, raising=False)
     monkeypatch.setattr(cli, "_CONSOLE_AVAILABLE", True)
+    # The log lives next to the tool, not in the working folder.
+    monkeypatch.setattr(sync_logger, "app_log_path", lambda: tmp_path / "sync.log")
 
     notified = []
     monkeypatch.setattr(cli, "_notify", lambda kind, message: notified.append((kind, message)))
@@ -183,6 +186,7 @@ def test_report_failure_is_silent_in_daemon_child(tmp_path, monkeypatch):
     # The detached daemon has no user to talk to; the launcher reports instead.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv(cli.DAEMONIZED_ENV, "1")
+    monkeypatch.setattr(sync_logger, "app_log_path", lambda: tmp_path / "sync.log")
 
     notified = []
     monkeypatch.setattr(cli, "_notify", lambda kind, message: notified.append(kind))
@@ -193,12 +197,20 @@ def test_report_failure_is_silent_in_daemon_child(tmp_path, monkeypatch):
     assert "detail=boom" in (tmp_path / "sync.log").read_text(encoding="utf-8")
 
 
+def test_default_log_lives_next_to_tool(tmp_path, monkeypatch):
+    # Running from an unrelated folder must not move the log file.
+    monkeypatch.chdir(tmp_path)
+    assert sync_logger.setup_logging().path == sync_logger.app_log_path()
+
+
 def test_daemon_launcher_reports_early_exit(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv(cli.DAEMONIZED_ENV, raising=False)
     monkeypatch.setattr(cli, "_lock_owner", lambda lock: None)
     monkeypatch.setattr(cli, "_spawn_daemon", lambda: 4242)
     monkeypatch.setattr(cli, "_wait_for_daemon", lambda pid, grace=0: False)
+    # Keep the failure log inside tmp instead of the real tool folder.
+    monkeypatch.setattr(sync_logger, "app_log_path", lambda: tmp_path / "sync.log")
 
     notified = []
     monkeypatch.setattr(cli, "_notify", lambda kind, message: notified.append(message))
