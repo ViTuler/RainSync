@@ -22,7 +22,7 @@ from pathlib import Path
 from threading import Lock
 
 from .ignore import IgnoreMatcher
-from .logger import NullLogger
+from .logger import NullLogger, timestamp
 from .models import Group, Project, SyncStats
 
 #: Suffix used for the atomic-write temp files.
@@ -47,8 +47,12 @@ class SyncEngine:
 
     # ------------------------------------------------------------ console
     def _say(self, action: str, file: str, source: str | None = None, dest: str | None = None) -> None:
-        """Print a short console line, e.g. ``[group] COPY x, a -> b``."""
-        text = f"[{self.group.name}] {action} {file}"
+        """Print a short console line, e.g. ``[group] COPY x, a -> b``.
+
+        The line is prefixed with the time the event was handled so watch-mode
+        output can be read next to the log file.
+        """
+        text = f"{timestamp()} [{self.group.name}] {action} {file}"
         if source and dest:
             text += f", {source} -> {dest}"
         print(text)
@@ -184,7 +188,7 @@ class SyncEngine:
                 else:
                     self._log.msg("COPY_ERROR", group=self.group.name, file=destination.name,
                                   from_project=source_project, to_project=dest_project, error=str(exc))
-                    print(f"  WARNING: could not replace {destination}: {exc}", file=sys.stderr)
+                    print(f"  {timestamp()} WARNING: could not replace {destination}: {exc}", file=sys.stderr)
                     return False
             self._log.msg("COPY", group=self.group.name, file=destination.name,
                           from_project=source_project, to_project=dest_project)
@@ -192,7 +196,7 @@ class SyncEngine:
         except OSError as exc:
             self._log.msg("COPY_ERROR", group=self.group.name, file=destination.name,
                           from_project=source_project, to_project=dest_project, error=str(exc))
-            print(f"  ERROR copying {source} -> {destination}: {exc}", file=sys.stderr)
+            print(f"  {timestamp()} ERROR copying {source} -> {destination}: {exc}", file=sys.stderr)
             return False
         finally:
             if temp.exists():

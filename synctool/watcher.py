@@ -20,6 +20,7 @@ from threading import Event, Lock, Thread
 from watchdog.events import FileSystemEventHandler
 
 from .engine import SyncEngine
+from .logger import timestamp
 from .models import Project
 
 
@@ -82,7 +83,7 @@ class GroupWatcher(FileSystemEventHandler):
         try:
             func(*args)
         except Exception as exc:  # noqa: BLE001 - watchdog threads must not die
-            print(f"[{self.engine.group.name}] ERROR: {exc}", file=sys.stderr)
+            print(f"{timestamp()} [{self.engine.group.name}] ERROR: {exc}", file=sys.stderr)
 
     def stop(self) -> None:
         self._stop.set()

@@ -15,8 +15,16 @@ from threading import Lock
 
 from .paths import app_log_path
 
+#: Timestamp format shared by the log file and the watch-mode console output.
+TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+
 #: Event fields that may appear in a line, in display order.
 _ORDERED = ("group", "file")
+
+
+def timestamp() -> str:
+    """Current local time as ``YYYY-MM-DD HH:MM:SS``."""
+    return datetime.now().strftime(TIMESTAMP_FORMAT)
 
 
 class Logger:
@@ -50,8 +58,7 @@ def format_line(event: str, fields: dict) -> str:
     Field ordering: ``group``, ``file``, ``from_project -> to_project`` (or
     ``project``), then any remaining ``key=value`` pairs.
     """
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    parts = [timestamp, event]
+    parts = [timestamp(), event]
 
     for key in _ORDERED:
         if key in fields:
