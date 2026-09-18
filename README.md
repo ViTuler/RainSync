@@ -1,31 +1,38 @@
 # synctool
 
 A small local CLI for synchronizing shared tool folders across multiple local
-Python projects.
+Python projects, and for backing up whole folders via one-way **map** groups.
+
+中文版见 [README_zh.md](README_zh.md)。
 
 ## Model
 
-Projects in the same **group** are peers — there is no canonical source
-project. A file change in one project is propagated to the other projects of
-that group. During a full sync the most recently modified version of each file
-wins and is copied to every project that does not already hold identical
-content.
+**Sync groups** — projects in the same group are peers. There is no canonical
+source project. A file change in one project is propagated to the other
+projects of that group. During a full sync the most recently modified version
+of each file wins and is copied to every project that does not already hold
+identical content.
+
+**Map groups** — each group copies one `source` folder into a `target` folder
+(recursive backup). Identical files are skipped; files that only exist in the
+target are left alone (not a destructive mirror).
 
 ## Project layout
 
 ```text
-sync_tool.py        thin entry point  (python sync_tool.py <command>)
-synctool/           the package
-  __main__.py         python -m synctool
-  models.py           data structures (Project / Group / SyncStats)
-  ignore.py           gitignore-style ignore matching
-  logger.py           append-only log file writer (sync history)
-  config.py           YAML loading / validation / group selection
-  engine.py           sync engine (full scan + event propagation)
-  watcher.py          watchdog wrapper with debounce (watch mode)
-  cli.py              argument parsing and commands
-legacy/             previous single-file implementation (reference only)
-tests/              unit tests
+sync_tool.py / main.py   thin entry point  (python main.py <command>)
+synctool/                the package
+  __main__.py              python -m synctool
+  models.py                data structures (Project / Group / MapGroup / …)
+  ignore.py                gitignore-style ignore matching
+  logger.py                append-only log file writer (sync history)
+  config.py                YAML loading / validation / group selection
+  engine.py                sync engine (full scan + event propagation)
+  mapper.py                folder mapping / backup (map command)
+  watcher.py               watchdog wrapper with debounce (watch mode)
+  cli.py                   argument parsing and commands
+legacy/                  previous single-file implementation (reference only)
+tests/                   unit tests
 ```
 
 ## Commands
@@ -37,6 +44,9 @@ python sync_tool.py sync -c my_config.yaml
 python sync_tool.py sync --dry-run
 python sync_tool.py watch
 python sync_tool.py watch -d             # watch as a detached background process
+python sync_tool.py map                  # backup all map_groups
+python sync_tool.py map Yuch_Group       # backup one map group
+python sync_tool.py map --dry-run
 python sync_tool.py --version
 python sync_tool.py --help
 ```
@@ -74,8 +84,10 @@ returns to the shell immediately.
 
 ## Configuration
 
+A config may define sync groups, map groups, or both.
+
 ```yaml
-group:
+sync_groups:
   common:
     target_folder: tools   # folder that is kept in sync inside each project
     init_sync: true        # watch: run a full sync before watching
@@ -84,7 +96,7 @@ group:
     watch:
       interval: 3          # debounce (seconds) in watch mode
 
-    project:               # at least two projects
+    projects:              # at least two projects
       - name: Rain Music
         path: C:\Users\...\RainM
         ignore: []         # optional project-level ignore patterns
@@ -96,9 +108,18 @@ group:
       - __pycache__/
       - "*.pyc"
       - "*.sync_tmp"
+
+map_groups:
+  Yuch_Group:
+    source: H:\test           # folder to back up
+    target: F:\test_mapping   # destination folder
 ```
 
-Both `group`/`groups` and `project`/`projects` spellings are accepted.
+Accepted spellings:
+
+* sync groups: `sync_groups` / `groups` / `group`
+* projects: `projects` / `project`
+* map groups: `map_groups` / `map_group`
 
 ### auto_walk
 
@@ -122,6 +143,13 @@ During a full sync, if the same relative file exists in several projects with
 different contents, the tool reports a **conflict** instead of guessing a
 winner.
 
+### Map backup behaviour
+
+* Copies every file and subdirectory under `source` into `target`.
+* Creates `target` when it does not exist.
+* Skips files that already match by content; overwrites when they differ.
+* Does **not** delete files that exist only in `target`.
+
 ## Logging
 
 Every operation is appended to a single `sync.log` file, always located next
@@ -134,6 +162,9 @@ when run from source). Lines are pipe-separated:
 2026-09-05 10:20:53 | DELETE | common | old.py | Rain WeChat -> Rain Music
 2026-09-05 10:20:53 | CONFLICT | common | config.py
 2026-09-05 10:20:53 | SYNC_DONE | common | copied=3 conflicts=0
+2026-09-18 14:50:01 | MAP_START
+2026-09-18 14:50:02 | MAP_COPY | Yuch_Group | nested/file.txt
+2026-09-18 14:50:02 | MAP_DONE | Yuch_Group | copied=12 skipped=3 dirs=4 errors=0
 ```
 
 ## YAML comments and formatting
@@ -142,4 +173,3 @@ The configuration is parsed with `ruamel.yaml` in round-trip mode with
 `preserve_quotes=True`, so comments, ordering, and quotes are preserved if the
 file is ever rewritten later. The current commands only read the config and
 never rewrite it.
-
