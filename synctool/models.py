@@ -60,3 +60,28 @@ class SyncStats:
             f"copied={self.copied} skipped={self.skipped} "
             f"deleted={self.deleted} conflicts={self.conflicts}"
         )
+
+
+@dataclass(frozen=True)
+class MapGroup:
+    """One source -> target folder mapping used by the ``map`` command."""
+
+    name: str
+    source: Path
+    target: Path
+
+
+@dataclass
+class MapStats:
+    """Counters produced by a map() run."""
+
+    copied: int = 0
+    skipped: int = 0
+    dirs: int = 0
+    errors: int = 0
+
+    def summary(self) -> str:
+        return (
+            f"copied={self.copied} skipped={self.skipped} "
+            f"dirs={self.dirs} errors={self.errors}"
+        )

@@ -12,9 +12,16 @@ import time
 from pathlib import Path
 
 from . import __version__
-from .config import Config, create_example_config, resolve_config_path, validate_groups
+from .config import (
+    Config,
+    create_example_config,
+    resolve_config_path,
+    validate_groups,
+    validate_map_groups,
+)
 from .engine import SyncEngine
 from .logger import setup_logging
+from .mapper import MapEngine
 from .paths import DEFAULT_CONFIG_NAME
 from .watcher import GroupWatcher
 
@@ -399,6 +406,37 @@ def cmd_sync(args: argparse.Namespace) -> int:
     return exit_code
 
 
+def cmd_map(args: argparse.Namespace) -> int:
+    log = setup_logging()
+
+    config_path = _resolve_config(args)
+    config = Config.load(config_path)
+    groups = config.select_map(args.group)
+    validate_map_groups(groups)
+
+    log.msg("MAP_START")
+
+    exit_code = 0
+    for group in groups:
+        print(f"\n[{group.name}] {group.source} -> {group.target}")
+        engine = MapEngine(group, dry_run=args.dry_run, verbose=args.verbose, logger=log)
+        stats = engine.map()
+        print(f"  DONE   {stats.summary()}")
+        log.msg(
+            "MAP_DONE",
+            group=group.name,
+            copied=stats.copied,
+            skipped=stats.skipped,
+            dirs=stats.dirs,
+            errors=stats.errors,
+        )
+        if stats.errors:
+            exit_code = 2
+
+    log.msg("MAP_END")
+    return exit_code
+
+
 def cmd_watch(args: argparse.Namespace) -> int:
     try:
         from watchdog.observers import Observer
@@ -542,6 +580,13 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--dry-run", action="store_true", help="Show changes without modifying files")
     watch.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     watch.set_defaults(func=cmd_watch)
+
+    map_cmd = sub.add_parser("map", help="Backup configured source folders into target folders")
+    map_cmd.add_argument("group", nargs="*", help="Optional map group name(s)")
+    map_cmd.add_argument("-c", "--config", default=None, help=_CONFIG_HELP)
+    map_cmd.add_argument("--dry-run", action="store_true", help="Show changes without modifying files")
+    map_cmd.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
+    map_cmd.set_defaults(func=cmd_map)
 
     init = sub.add_parser("init", help="Create an example config file the tool will use")
     init.add_argument("-c", "--config", default=None, help=_CONFIG_HELP)

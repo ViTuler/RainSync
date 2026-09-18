@@ -13,7 +13,7 @@ from typing import Any, Iterable
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
-from .models import Group, Project, SyncError
+from .models import Group, MapGroup, Project, SyncError
 from .paths import DEFAULT_CONFIG_NAME, app_config_path, resolve_config_path
 
 DEFAULT_INTERVAL = 0.3
@@ -24,12 +24,25 @@ _GROUP_KEYS = (
     "allow_delete, auto_walk, init_sync, watch.interval"
 )
 
+#: Accepted top-level keys for sync groups (first match wins).
+_SYNC_GROUP_KEYS = ("sync_groups", "groups", "group")
+
+#: Accepted top-level keys for map groups (first match wins).
+_MAP_GROUP_KEYS = ("map_groups", "map_group")
+
 
 class Config:
-    """A loaded configuration: ``groups`` keyed by name + the raw YAML doc."""
+    """A loaded configuration: sync groups + map groups + the raw YAML doc."""
 
-    def __init__(self, groups: dict[str, Group], path: Path, raw: Any):
+    def __init__(
+        self,
+        groups: dict[str, Group],
+        path: Path,
+        raw: Any,
+        map_groups: dict[str, MapGroup] | None = None,
+    ):
         self.groups = groups
+        self.map_groups = map_groups or {}
         self.path = path
         # Round-trip ruamel object, retained for future config rewrites.
         self.raw = raw
@@ -42,6 +55,17 @@ class Config:
         ru_yaml.default_flow_style = False
         ru_yaml.indent(mapping=2, sequence=4, offset=2)
         return ru_yaml
+
+    @staticmethod
+    def _first_mapping(data: dict, keys: tuple[str, ...]) -> dict | None:
+        for key in keys:
+            value = data.get(key)
+            if value is None:
+                continue
+            if not isinstance(value, dict):
+                raise SyncError(f"Config '{key}' must be a mapping/object")
+            return value
+        return None
 
     @classmethod
     def load(cls, path: Path) -> "Config":
@@ -58,15 +82,24 @@ class Config:
         if not isinstance(data, dict):
             raise SyncError("Config root must be a mapping/object")
 
-        groups_raw = data.get("groups") or data.get("group")
-        if not isinstance(groups_raw, dict) or not groups_raw:
-            raise SyncError("Config must contain a non-empty 'groups'/'group' mapping")
+        groups_raw = cls._first_mapping(data, _SYNC_GROUP_KEYS) or {}
+        map_raw = cls._first_mapping(data, _MAP_GROUP_KEYS) or {}
+
+        if not groups_raw and not map_raw:
+            raise SyncError(
+                "Config must contain a non-empty "
+                "'sync_groups'/'groups' or 'map_groups' mapping"
+            )
 
         groups: dict[str, Group] = {
             name: cls._parse_group(name, raw)
             for name, raw in groups_raw.items()
         }
-        return cls(groups, path, data)
+        map_groups: dict[str, MapGroup] = {
+            name: cls._parse_map_group(name, raw)
+            for name, raw in map_raw.items()
+        }
+        return cls(groups, path, data, map_groups=map_groups)
 
     # ----------------------------------------------------------- group parse
     @classmethod
@@ -137,15 +170,47 @@ class Config:
             )
         return projects
 
+    @classmethod
+    def _parse_map_group(cls, name: str, raw: Any) -> MapGroup:
+        if not isinstance(raw, dict):
+            raise SyncError(f"Map group '{name}' must be a mapping/object")
+
+        source = raw.get("source")
+        if not isinstance(source, str) or not source.strip():
+            raise SyncError(f"Map group '{name}': 'source' is required")
+
+        target = raw.get("target")
+        if not isinstance(target, str) or not target.strip():
+            raise SyncError(f"Map group '{name}': 'target' is required")
+
+        return MapGroup(
+            name=name,
+            source=Path(source).expanduser().resolve(),
+            target=Path(target).expanduser().resolve(),
+        )
+
     # ------------------------------------------------------------ selection
     def select(self, names: list[str] | None) -> list[Group]:
-        """Return the requested groups (or all of them when ``names`` is empty)."""
+        """Return the requested sync groups (or all when ``names`` is empty)."""
+        if not self.groups:
+            raise SyncError("Config has no sync groups ('sync_groups'/'groups')")
         if not names:
             return list(self.groups.values())
         missing = [n for n in names if n not in self.groups]
         if missing:
             raise SyncError(f"Unknown group(s): {', '.join(missing)}")
         return [self.groups[n] for n in names]
+
+    def select_map(self, names: list[str] | None) -> list[MapGroup]:
+        """Return the requested map groups (or all when ``names`` is empty)."""
+        if not self.map_groups:
+            raise SyncError("Config has no map groups ('map_groups')")
+        if not names:
+            return list(self.map_groups.values())
+        missing = [n for n in names if n not in self.map_groups]
+        if missing:
+            raise SyncError(f"Unknown map group(s): {', '.join(missing)}")
+        return [self.map_groups[n] for n in names]
 
 
 def validate_groups(groups: Iterable[Group]) -> None:
@@ -157,6 +222,24 @@ def validate_groups(groups: Iterable[Group]) -> None:
                     f"Group '{group.name}': project path is not an existing directory: {project.path}\n"
                     f"Edit the config file so every project points at a real folder."
                 )
+
+
+def validate_map_groups(groups: Iterable[MapGroup]) -> None:
+    """Ensure every map source directory exists and target is usable."""
+    for group in groups:
+        if not group.source.exists() or not group.source.is_dir():
+            raise SyncError(
+                f"Map group '{group.name}': source is not an existing directory: {group.source}\n"
+                f"Edit the config file so every map source points at a real folder."
+            )
+        if group.source.resolve() == group.target.resolve():
+            raise SyncError(
+                f"Map group '{group.name}': source and target must be different paths"
+            )
+        if group.target.exists() and not group.target.is_dir():
+            raise SyncError(
+                f"Map group '{group.name}': target exists but is not a directory: {group.target}"
+            )
 
 
 def default_config_path() -> Path:
@@ -253,6 +336,12 @@ groups:
     # Optional: watch interval in seconds (default: 0.3)
     watch:
       interval: 0.3
+
+# Optional: map groups backup a source folder into a target folder
+map_groups:
+  example_map:
+    source: ~/backups/source_folder
+    target: ~/backups/mapped_folder
 """
 
 
