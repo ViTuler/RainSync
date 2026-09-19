@@ -32,11 +32,11 @@ tests/                   单元测试
 
 ```text
 python sync_tool.py sync
-python sync_tool.py sync -d              # 同步一次，然后进入监听
+python sync_tool.py sync -d              # 同步一次，然后在后台监听
 python sync_tool.py sync -c my_config.yaml
 python sync_tool.py sync --dry-run
 python sync_tool.py watch
-python sync_tool.py watch -d             # 以后台分离进程方式监听
+python sync_tool.py watch -d             # 在后台监听（不新开控制台）
 python sync_tool.py map                  # 备份全部 map_groups
 python sync_tool.py map Yuch_Group       # 备份指定 map 组
 python sync_tool.py map --dry-run
@@ -60,7 +60,7 @@ B\                     <- 从这里运行：B 下的 sync_config.yaml 优先
 
 `watch -d` 会把监听器以后台**分离进程**重新拉起，然后立即返回 shell。
 
-* **单实例** — 同一配置与组选择只允许一个后台监听。再次启动会提示警告并退出，不会新建进程。系统临时目录下的 PID 锁文件（`synctool-watch-<hash>.pid`）用于跟踪运行中的监听器；崩溃残留的陈旧锁会自动清理。
+* **允许多实例** — 再次执行 `watch -d` 不会阻止或替换已经在跑的监听器。每次 `-d` 都是独立进程。
 * **控制台 vs 无窗口构建** — 普通控制台构建会把 PID / 警告打印到控制台；无控制台（`--noconsole`）构建则弹出 Windows 消息框。
 * 停止方式：`taskkill /IM <exe-name> /F`（会结束该 exe 的全部实例）。
 

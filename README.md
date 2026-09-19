@@ -39,11 +39,11 @@ tests/                   unit tests
 
 ```text
 python sync_tool.py sync
-python sync_tool.py sync -d              # sync once, then watch
+python sync_tool.py sync -d              # sync once, then watch in the background
 python sync_tool.py sync -c my_config.yaml
 python sync_tool.py sync --dry-run
 python sync_tool.py watch
-python sync_tool.py watch -d             # watch as a detached background process
+python sync_tool.py watch -d             # watch in the background (no extra console)
 python sync_tool.py map                  # backup all map_groups
 python sync_tool.py map Yuch_Group       # backup one map group
 python sync_tool.py map --dry-run
@@ -72,11 +72,8 @@ B\                     <- run from here: a sync_config.yaml in B takes priority
 `watch -d` re-launches the watcher as a **detached background process** and
 returns to the shell immediately.
 
-* **Single instance** — only one background watcher may run for a given config
-  and group selection. Starting a second one shows a warning and exits without
-  creating a new process. A PID lock file under the system temp dir
-  (`synctool-watch-<hash>.pid`) tracks the running watcher; a stale lock from a
-  crashed watcher is cleaned up automatically.
+* **Multiple instances** — starting `watch -d` again does not stop or block
+  an already running watcher. Each `-d` launch is its own process.
 * **Console vs windowed builds** — in a normal console build the PID / warning
   messages are printed to the console. In a windowed (`--noconsole`) build they
   are shown as a Windows message box, because there is no console to print to.

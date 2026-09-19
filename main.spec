@@ -7,13 +7,15 @@ Build from the project root:
 
 ``console=True`` is deliberate and must stay that way:
 
-* ``watch``    runs in the terminal that started it, keeps printing, and is
-               stopped with Ctrl+C.
-* ``watch -d`` re-launches itself detached, so it survives the terminal.
+* ``watch``     runs in the terminal that started it, keeps printing, and is
+                stopped with Ctrl+C.
+* any ``-d``   (``watch -d``, ``sync -d``) re-launches itself with
+                CREATE_NO_WINDOW, so it survives the terminal and does not
+                open a second console.
 
 With ``--noconsole`` Windows treats the exe as a GUI app: the shell stops
 waiting for it and stdout/stderr are dropped, so ``watch`` looks like it
-exits immediately and its output is invisible.
+exits immediately and its output is invisible. Do not set console=False.
 """
 
 a = Analysis(

@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -80,9 +78,11 @@ def _build_daemon_env() -> dict:
 def _spawn_daemon() -> int:
     """Re-launch the current command as a detached background process.
 
-    The child writes its history to ``sync.log`` but has no console.  Its PID
-    is returned so the caller can print it for the user.  After this returns,
-    the caller exits immediately (a daemon parent should not linger).
+    The child writes its history to ``sync.log``.  On Windows it is started
+    with ``CREATE_NO_WINDOW`` (not ``DETACHED_PROCESS``): a console-subsystem
+    build (``console=True``) plus ``DETACHED_PROCESS`` makes PyInstaller open
+    a second console.  ``CREATE_NO_WINDOW`` keeps the child off-screen while
+    the parent returns immediately.
     """
     env = _build_daemon_env()
 
@@ -93,11 +93,17 @@ def _spawn_daemon() -> int:
         cmd = [sys.executable, "-m", APP_NAME, *sys.argv[1:]]
 
     if os.name == "nt":
-        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        # Do not combine with DETACHED_PROCESS: that flag makes Windows ignore
+        # CREATE_NO_WINDOW and a console-subsystem exe then gets a new window.
+        flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
         proc = subprocess.Popen(
             cmd, env=env,
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags,
+            stderr=subprocess.DEVNULL, close_fds=True,
+            creationflags=flags, startupinfo=startupinfo,
         )
     else:
         proc = subprocess.Popen(
@@ -158,19 +164,7 @@ def _notify(kind: str, message: str) -> None:
             pass
 
 
-# -------------------------------------------- single-instance daemon lock
-def _daemon_lock_path(config_path: str, groups: list[str]) -> Path:
-    """Stable per-(config, selected-groups) lock file path.
-
-    Stored under the system temp dir so two daemon starts for the same config
-    and groups resolve to the same lock and only one watcher may run.
-    """
-    resolved = os.path.abspath(os.path.expanduser(config_path))
-    scope = ",".join(sorted(groups or []))
-    digest = hashlib.sha1(f"{resolved}|{scope}".encode("utf-8", "replace")).hexdigest()[:12]
-    return Path(tempfile.gettempdir()) / f"{APP_NAME}-watch-{digest}.pid"
-
-
+# ------------------------------------------------------- process liveness
 def _pid_is_running(pid: int) -> bool:
     """Best-effort cross-platform liveness check for a PID."""
     if not pid or pid <= 0:
@@ -193,74 +187,6 @@ def _pid_is_running(pid: int) -> bool:
     except PermissionError:
         return True
     return True
-
-
-def _pid_is_same_app(pid: int) -> bool:
-    """True when the running process is another instance of this executable.
-
-    Guards against a lock file whose PID was recycled by an unrelated process.
-    """
-    if not getattr(sys, "frozen", False):
-        return True
-    if os.name != "nt":
-        return True
-    try:
-        import ctypes
-        from ctypes import wintypes
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.OpenProcess(0x1000, False, pid)
-        if not handle:
-            return False
-        try:
-            name = ctypes.create_unicode_buffer(1024)
-            size = wintypes.DWORD(1024)
-            ok = kernel32.QueryFullProcessImageNameW(handle, 0, name, ctypes.byref(size))
-            if not ok:
-                return False
-            mine = os.path.basename(sys.executable).lower()
-            return os.path.basename(name.value).lower() == mine
-        finally:
-            kernel32.CloseHandle(handle)
-    except Exception:
-        return False
-
-
-def _lock_owner(lock: Path) -> int | None:
-    """PID stored in ``lock``, but only when that process is still running."""
-    try:
-        pid = int(lock.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        return None
-    if _pid_is_running(pid) and _pid_is_same_app(pid):
-        return pid
-    return None
-
-
-def _acquire_daemon_lock(lock: Path) -> int | None:
-    """Atomically claim ``lock``. Returns an existing owner PID, or None.
-
-    A stale lock file (owner process is gone) is removed and retried once, so
-    a crashed daemon never blocks the next start.
-    """
-    for _ in range(2):
-        try:
-            fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
-            owner = _lock_owner(lock)
-            if owner is not None:
-                return owner
-            try:
-                lock.unlink()
-            except OSError:
-                pass
-            continue
-        except OSError:
-            return None
-        else:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(str(os.getpid()))
-            return None
-    return None
 
 
 def _stop_hint() -> str:
@@ -337,15 +263,6 @@ def _newest_error(log_file: Path, after_line: int) -> str | None:
     return None
 
 
-def _discard_stale_lock(lock: Path) -> None:
-    """Delete ``lock`` when the daemon it points at is no longer running."""
-    if _lock_owner(lock) is None:
-        try:
-            lock.unlink()
-        except OSError:
-            pass
-
-
 # ------------------------------------------------------------------ commands
 def _resolve_config(args: argparse.Namespace) -> Path:
     """Return the config file to use, creating one when none exists.
@@ -357,7 +274,7 @@ def _resolve_config(args: argparse.Namespace) -> Path:
     copied somewhere new.
 
     ``args.config`` is normalized to the resolved path so later steps (daemon
-    re-spawn, lock naming) all agree on the same file.
+    re-spawn) all agree on the same file.
     """
     explicit = getattr(args, "config", None)
     path = resolve_config_path(explicit)
@@ -437,6 +354,37 @@ def cmd_map(args: argparse.Namespace) -> int:
     return exit_code
 
 
+def _launch_daemon(args: argparse.Namespace) -> int:
+    """Start any ``-d`` command in the background and return immediately.
+
+    The parent only reports the child PID.  The child (``SYNCTOOL_DAEMONIZED``)
+    runs the real command and does not spawn again.
+    """
+    log = setup_logging()
+    _resolve_config(args)
+
+    before = _log_line_count(log.path)
+    try:
+        pid = _spawn_daemon()
+    except OSError as exc:
+        _notify("warning", f"Could not start the background process:\n{exc}")
+        return 1
+
+    if not _wait_for_daemon(pid):
+        reason = _newest_error(log.path, before)
+        detail = f"\n\nReason: {reason}" if reason else ""
+        _report_failure(
+            f"The background process exited immediately (pid {pid}).{detail}\n\n"
+            f"Log: {log.path}"
+        )
+        return 1
+
+    _notify("info", f"Background process started (pid {pid}).\n\n"
+                    f"History: {log.path}\n"
+                    f"Stop it with: {_stop_hint()}")
+    return 0
+
+
 def cmd_watch(args: argparse.Namespace) -> int:
     try:
         from watchdog.observers import Observer
@@ -447,58 +395,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
         ) from exc
 
     log = setup_logging()
-
-    # Resolve (and, when missing, create) the config BEFORE any daemon work so
-    # both the launcher and the detached child agree on the same file.
     config_path = _resolve_config(args)
-
-    daemon_mode = bool(getattr(args, "daemon", False))
-    is_daemon_child = os.environ.get(DAEMONIZED_ENV) == "1"
-
-    # --- foreground launcher of `watch -d` -------------------------------
-    # Re-launch ourselves detached, report the PID, and exit immediately.
-    if daemon_mode and not is_daemon_child:
-        lock = _daemon_lock_path(args.config, args.group)
-        owner = _lock_owner(lock)
-        if owner is not None:
-            _notify("warning", f"A background watcher is already running (pid {owner}).\n"
-                               f"Not starting another one.\n\nStop it with:\n{_stop_hint()}")
-            return 1
-
-        before = _log_line_count(log.path)
-        try:
-            pid = _spawn_daemon()
-        except OSError as exc:
-            _notify("warning", f"Could not start the background watcher:\n{exc}")
-            return 1
-
-        # A packaged build has no console, so a daemon that dies during
-        # startup must be detected here rather than reported as started.
-        if not _wait_for_daemon(pid):
-            _discard_stale_lock(lock)
-            reason = _newest_error(log.path, before)
-            detail = f"\n\nReason: {reason}" if reason else ""
-            _report_failure(
-                f"The background watcher exited immediately (pid {pid}).{detail}\n\n"
-                f"Log: {log.path}"
-            )
-            return 1
-
-        _notify("info", f"Background watcher started (pid {pid}).\n\n"
-                        f"History: {log.path}\n"
-                        f"Stop it with: {_stop_hint()}")
-        return 0
-
-    # --- the detached child (and normal foreground `watch`) --------------
-    if daemon_mode:
-        # Authoritative single-instance check: guards against two starts
-        # racing each other.  The daemon owns the lock for its whole life.
-        lock = _daemon_lock_path(args.config, args.group)
-        owner = _acquire_daemon_lock(lock)
-        if owner is not None:
-            _notify("warning", f"Another background watcher is already running (pid {owner}).\n"
-                               f"This instance is exiting.")
-            return 1
 
     config = Config.load(config_path)
     groups = config.select(args.group)
@@ -567,7 +464,8 @@ def build_parser() -> argparse.ArgumentParser:
     sync = sub.add_parser("sync", help="Synchronize all configured groups immediately")
     sync.add_argument("group", nargs="*", help="Optional group name(s)")
     sync.add_argument("-c", "--config", default=None, help=_CONFIG_HELP)
-    sync.add_argument("-d", "--daemon", action="store_true", help="Sync once, then watch for changes")
+    sync.add_argument("-d", "--daemon", action="store_true",
+                      help="Sync once, then watch in the background")
     sync.add_argument("--dry-run", action="store_true", help="Show changes without modifying files")
     sync.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     sync.set_defaults(func=cmd_sync)
@@ -576,7 +474,7 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("group", nargs="*", help="Optional group name(s)")
     watch.add_argument("-c", "--config", default=None, help=_CONFIG_HELP)
     watch.add_argument("-d", "--daemon", action="store_true",
-                       help="Run the watcher as a detached background process")
+                       help="Run the watcher in the background (no extra console)")
     watch.add_argument("--dry-run", action="store_true", help="Show changes without modifying files")
     watch.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     watch.set_defaults(func=cmd_watch)
@@ -605,13 +503,19 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        # Backward-compatible convenience: `sync -d` == sync once, then watch
-        # in the FOREGROUND (distinct from `watch -d`, which daemonizes).
-        if args.command == "sync" and getattr(args, "daemon", False):
+        daemon_mode = bool(getattr(args, "daemon", False))
+        is_daemon_child = os.environ.get(DAEMONIZED_ENV) == "1"
+
+        # Every `-d` command: the parent only spawns and returns.  `watch`
+        # without `-d` stays in this process and blocks the current console.
+        if daemon_mode and not is_daemon_child:
+            return _launch_daemon(args)
+
+        # Detached `sync -d`: sync once, then keep watching in this process.
+        if args.command == "sync" and daemon_mode:
             code = cmd_sync(args)
             if code != 0:
                 return code
-            args.daemon = False
             return cmd_watch(args)
 
         return args.func(args)
