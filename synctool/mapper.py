@@ -1,8 +1,11 @@
 """Service layer: folder mapping / backup.
 
-``map`` copies every file and subdirectory under a configured ``source``
-folder into a ``target`` folder.  Existing files in the target are overwritten
-when content differs; identical files are skipped.  Extra files already in the
+``map`` copies a configured ``source`` folder into a ``target`` folder the way
+Windows robocopy does by default: a file is copied only when it is missing in
+the target, or when its size or last-write time differs.  Unchanged files are
+skipped with a stat, not a full read.  The copy itself stays safe — bytes land
+in a temp file, then ``os.replace`` swaps that file into place, so a failed
+copy never leaves a half-written destination.  Extra files already in the
 target are left alone (backup semantics, not a destructive mirror).
 """
 
@@ -18,6 +21,10 @@ from .logger import NullLogger, timestamp
 from .models import MapGroup, MapStats
 
 TEMP_SUFFIX = ".map_tmp"
+
+# robocopy /FFT: FAT and exFAT store times in 2-second steps.  Without this
+# window a backup onto those volumes looks "changed" on every later run.
+MTIME_TOLERANCE_SECONDS = 2.0
 
 
 class MapEngine:
@@ -44,6 +51,24 @@ class MapEngine:
             for block in iter(lambda: fh.read(1024 * 1024), b""):
                 digest.update(block)
         return digest.hexdigest()
+
+    def same_file(self, source: Path, destination: Path) -> bool:
+        """True when robocopy would classify the pair as Same.
+
+        Same size and last-write time (within ``MTIME_TOLERANCE_SECONDS``).
+        Attribute-only differences are ignored, matching robocopy without ``/IT``.
+        """
+        if not source.is_file() or not destination.is_file():
+            return False
+        try:
+            source_stat = source.stat()
+            dest_stat = destination.stat()
+        except OSError:
+            return False
+        if source_stat.st_size != dest_stat.st_size:
+            return False
+        delta = abs(source_stat.st_mtime - dest_stat.st_mtime)
+        return delta <= MTIME_TOLERANCE_SECONDS
 
     def same_content(self, a: Path, b: Path) -> bool:
         if not a.is_file() or not b.is_file():
@@ -103,7 +128,7 @@ class MapEngine:
                     pass
 
     def map(self) -> MapStats:
-        """Backup ``source`` into ``target``, including all nested content."""
+        """Backup changed files from ``source`` into ``target``."""
         source = self.group.source
         target = self.group.target
         stats = MapStats()
@@ -149,10 +174,10 @@ class MapEngine:
                         self._say("DIR", rel)
                 continue
 
-            if not path.is_file():
+            if not path.is_file() or path.name.endswith(TEMP_SUFFIX):
                 continue
 
-            if destination.is_file() and self.same_content(path, destination):
+            if self.same_file(path, destination):
                 stats.skipped += 1
                 if self.verbose:
                     self._say("SKIP", rel)

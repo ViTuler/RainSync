@@ -14,8 +14,9 @@ of each file wins and is copied to every project that does not already hold
 identical content.
 
 **Map groups** — each group copies one `source` folder into a `target` folder
-(recursive backup). Identical files are skipped; files that only exist in the
-target are left alone (not a destructive mirror).
+(recursive backup). Like robocopy, only missing or changed files are copied
+(size or last-write time); files that only exist in the target are left alone
+(not a destructive mirror).
 
 ## Project layout
 
@@ -142,9 +143,12 @@ winner.
 
 ### Map backup behaviour
 
-* Copies every file and subdirectory under `source` into `target`.
+* Copies a file under `source` into `target` only when it is missing, or when
+  its size or last-write time differs (robocopy default). Unchanged files are
+  skipped without reading their contents.
+* The copy is safe: written to a temp file in the destination folder, then
+  swapped into place. A failed copy does not leave a half-written file.
 * Creates `target` when it does not exist.
-* Skips files that already match by content; overwrites when they differ.
 * Does **not** delete files that exist only in `target`.
 
 ## Logging
