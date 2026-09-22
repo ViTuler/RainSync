@@ -46,7 +46,7 @@ python sync_tool.py sync --dry-run
 python sync_tool.py watch
 python sync_tool.py watch -d             # watch in the background (no extra console)
 python sync_tool.py map                  # backup all map_groups
-python sync_tool.py map Yuch_Group       # backup one map group
+python sync_tool.py map Test_Group       # backup one map group
 python sync_tool.py map --dry-run
 python sync_tool.py --version
 python sync_tool.py --help
@@ -108,7 +108,7 @@ sync_groups:
       - "*.sync_tmp"
 
 map_groups:
-  Yuch_Group:
+  Test_Group:
     source: H:\test           # folder to back up
     target: F:\test_mapping   # destination folder
 ```
@@ -164,8 +164,8 @@ when run from source). Lines are pipe-separated:
 2026-09-05 10:20:53 | CONFLICT | common | config.py
 2026-09-05 10:20:53 | SYNC_DONE | common | copied=3 conflicts=0
 2026-09-18 14:50:01 | MAP_START
-2026-09-18 14:50:02 | MAP_COPY | Yuch_Group | nested/file.txt
-2026-09-18 14:50:02 | MAP_DONE | Yuch_Group | copied=12 skipped=3 dirs=4 errors=0
+2026-09-18 14:50:02 | MAP_COPY | Test_Group | nested/file.txt
+2026-09-18 14:50:02 | MAP_DONE | Test_Group | copied=12 skipped=3 dirs=4 errors=0
 ```
 
 ## YAML comments and formatting

@@ -38,7 +38,7 @@ python sync_tool.py sync --dry-run
 python sync_tool.py watch
 python sync_tool.py watch -d             # 在后台监听（不新开控制台）
 python sync_tool.py map                  # 备份全部 map_groups
-python sync_tool.py map Yuch_Group       # 备份指定 map 组
+python sync_tool.py map Test_Group       # 备份指定 map 组
 python sync_tool.py map --dry-run
 python sync_tool.py --version
 python sync_tool.py --help
@@ -92,7 +92,7 @@ sync_groups:
       - "*.sync_tmp"
 
 map_groups:
-  Yuch_Group:
+  Test_Group:
     source: H:\test           # 要备份的源文件夹
     target: F:\test_mapping   # 备份目标文件夹
 ```
@@ -138,8 +138,8 @@ map_groups:
 2026-09-05 10:20:53 | CONFLICT | common | config.py
 2026-09-05 10:20:53 | SYNC_DONE | common | copied=3 conflicts=0
 2026-09-18 14:50:01 | MAP_START
-2026-09-18 14:50:02 | MAP_COPY | Yuch_Group | nested/file.txt
-2026-09-18 14:50:02 | MAP_DONE | Yuch_Group | copied=12 skipped=3 dirs=4 errors=0
+2026-09-18 14:50:02 | MAP_COPY | Test_Group | nested/file.txt
+2026-09-18 14:50:02 | MAP_DONE | Test_Group | copied=12 skipped=3 dirs=4 errors=0
 ```
 
 ## YAML 注释与格式
