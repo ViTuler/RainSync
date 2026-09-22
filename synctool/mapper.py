@@ -7,6 +7,9 @@ skipped with a stat, not a full read.  The copy itself stays safe — bytes land
 in a temp file, then ``os.replace`` swaps that file into place, so a failed
 copy never leaves a half-written destination.  Extra files already in the
 target are left alone (backup semantics, not a destructive mirror).
+
+Nested trees are walked once on the main thread; file copies are then split
+across ``work_threaders`` worker threads (default 5).
 """
 
 from __future__ import annotations
@@ -15,7 +18,9 @@ import hashlib
 import os
 import shutil
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from threading import Lock
 
 from .logger import NullLogger, timestamp
 from .models import MapGroup, MapStats
@@ -40,9 +45,15 @@ class MapEngine:
         self.dry_run = dry_run
         self.verbose = verbose
         self._log = logger if logger is not None else NullLogger()
+        self._io_lock = Lock()
 
     def _say(self, action: str, rel: str) -> None:
-        print(f"{timestamp()} [{self.group.name}] {action} {rel}")
+        with self._io_lock:
+            print(f"{timestamp()} [{self.group.name}] {action} {rel}")
+
+    def _warn(self, message: str) -> None:
+        with self._io_lock:
+            print(f"  {timestamp()} {message}", file=sys.stderr)
 
     @staticmethod
     def _hash(path: Path) -> str:
@@ -101,10 +112,7 @@ class MapEngine:
                         file=rel,
                         error=str(exc),
                     )
-                    print(
-                        f"  {timestamp()} WARNING: could not replace {destination}: {exc}",
-                        file=sys.stderr,
-                    )
+                    self._warn(f"WARNING: could not replace {destination}: {exc}")
                     return False
             self._log.msg("MAP_COPY", group=self.group.name, file=rel)
             return True
@@ -115,10 +123,7 @@ class MapEngine:
                 file=rel,
                 error=str(exc),
             )
-            print(
-                f"  {timestamp()} ERROR copying {source} -> {destination}: {exc}",
-                file=sys.stderr,
-            )
+            self._warn(f"ERROR copying {source} -> {destination}: {exc}")
             return False
         finally:
             if temp.exists():
@@ -127,11 +132,46 @@ class MapEngine:
                 except OSError:
                     pass
 
+    def _process_file(self, source_path: Path, destination: Path, rel: str) -> str:
+        """Handle one file. Returns ``copied``, ``skipped``, or ``error``."""
+        if self.same_file(source_path, destination):
+            if self.verbose:
+                self._say("SKIP", rel)
+            return "skipped"
+
+        if self._copy_file(source_path, destination, rel):
+            self._say("COPY", rel)
+            return "copied"
+        return "error"
+
+    def _create_dirs(self, dirs: list[tuple[Path, str]], stats: MapStats) -> None:
+        for destination, rel in dirs:
+            stats.dirs += 1
+            if self.dry_run:
+                if self.verbose:
+                    self._say("DIR", rel)
+                continue
+            try:
+                destination.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                stats.errors += 1
+                self._log.msg(
+                    "MAP_DIR_ERROR",
+                    group=self.group.name,
+                    file=rel,
+                    error=str(exc),
+                )
+                self._warn(f"ERROR creating {destination}: {exc}")
+            else:
+                if self.verbose:
+                    self._say("DIR", rel)
+
     def map(self) -> MapStats:
         """Backup changed files from ``source`` into ``target``."""
         source = self.group.source
         target = self.group.target
         stats = MapStats()
+        workers = self.group.work_threaders
 
         if not source.exists() or not source.is_dir():
             raise RuntimeError(
@@ -140,6 +180,9 @@ class MapEngine:
 
         if not self.dry_run:
             target.mkdir(parents=True, exist_ok=True)
+
+        dirs: list[tuple[Path, str]] = []
+        files: list[tuple[Path, Path, str]] = []
 
         for path in sorted(source.rglob("*")):
             try:
@@ -150,43 +193,35 @@ class MapEngine:
             destination = target / rel
 
             if path.is_dir():
-                stats.dirs += 1
-                if self.dry_run:
-                    if self.verbose:
-                        self._say("DIR", rel)
-                    continue
-                try:
-                    destination.mkdir(parents=True, exist_ok=True)
-                except OSError as exc:
-                    stats.errors += 1
-                    self._log.msg(
-                        "MAP_DIR_ERROR",
-                        group=self.group.name,
-                        file=rel,
-                        error=str(exc),
-                    )
-                    print(
-                        f"  {timestamp()} ERROR creating {destination}: {exc}",
-                        file=sys.stderr,
-                    )
-                else:
-                    if self.verbose:
-                        self._say("DIR", rel)
+                dirs.append((destination, rel))
                 continue
 
             if not path.is_file() or path.name.endswith(TEMP_SUFFIX):
                 continue
 
-            if self.same_file(path, destination):
-                stats.skipped += 1
-                if self.verbose:
-                    self._say("SKIP", rel)
-                continue
+            files.append((path, destination, rel))
 
-            if self._copy_file(path, destination, rel):
+        self._create_dirs(dirs, stats)
+
+        def _apply_result(result: str) -> None:
+            if result == "copied":
                 stats.copied += 1
-                self._say("COPY", rel)
+            elif result == "skipped":
+                stats.skipped += 1
             else:
                 stats.errors += 1
+
+        if workers <= 1 or len(files) <= 1:
+            for source_path, destination, rel in files:
+                _apply_result(self._process_file(source_path, destination, rel))
+            return stats
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [
+                pool.submit(self._process_file, source_path, destination, rel)
+                for source_path, destination, rel in files
+            ]
+            for future in as_completed(futures):
+                _apply_result(future.result())
 
         return stats

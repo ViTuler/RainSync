@@ -13,7 +13,7 @@ from typing import Any, Iterable
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
-from .models import Group, MapGroup, Project, SyncError
+from .models import DEFAULT_MAP_WORK_THREADERS, Group, MapGroup, Project, SyncError
 from .paths import DEFAULT_CONFIG_NAME, app_config_path, resolve_config_path
 
 DEFAULT_INTERVAL = 0.3
@@ -183,10 +183,21 @@ class Config:
         if not isinstance(target, str) or not target.strip():
             raise SyncError(f"Map group '{name}': 'target' is required")
 
+        work_threaders = raw.get("work_threaders", DEFAULT_MAP_WORK_THREADERS)
+        if isinstance(work_threaders, bool) or not isinstance(work_threaders, int):
+            raise SyncError(
+                f"Map group '{name}': 'work_threaders' must be a positive integer"
+            )
+        if work_threaders < 1:
+            raise SyncError(
+                f"Map group '{name}': 'work_threaders' must be >= 1, got {work_threaders}"
+            )
+
         return MapGroup(
             name=name,
             source=Path(source).expanduser().resolve(),
             target=Path(target).expanduser().resolve(),
+            work_threaders=work_threaders,
         )
 
     # ------------------------------------------------------------ selection
@@ -342,6 +353,7 @@ map_groups:
   example_map:
     source: ~/backups/source_folder
     target: ~/backups/mapped_folder
+    work_threaders: 5   # parallel copy workers (default: 5)
 """
 
 

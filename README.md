@@ -111,6 +111,7 @@ map_groups:
   Test_Group:
     source: H:\test           # folder to back up
     target: F:\test_mapping   # destination folder
+    work_threaders: 5         # parallel copy workers (default: 5)
 ```
 
 Accepted spellings:
@@ -146,10 +147,30 @@ winner.
 * Copies a file under `source` into `target` only when it is missing, or when
   its size or last-write time differs (robocopy default). Unchanged files are
   skipped without reading their contents.
+* Nested folders are scanned on the main thread; file copies run on
+  ``work_threaders`` workers (default **5**, set per map group).
 * The copy is safe: written to a temp file in the destination folder, then
   swapped into place. A failed copy does not leave a half-written file.
 * Creates `target` when it does not exist.
 * Does **not** delete files that exist only in `target`.
+
+## Packaging
+
+Build from the project root:
+
+```text
+pyinstaller --noconfirm main.spec
+```
+
+**Attention:** keep the console subsystem on. `main.spec` sets `console=True` on
+purpose — do **not** switch to `--noconsole` / `console=False`.
+
+* `sync`, `map`, and foreground `watch` need a console for progress output and
+  Ctrl+C.
+* With `--noconsole`, Windows treats the exe as a GUI app: the shell may return
+  immediately, and stdout/stderr are dropped so command output disappears.
+* Background mode (`watch -d` / `sync -d`) still uses `CREATE_NO_WINDOW` so the
+  detached child does not open a second console window.
 
 ## Logging
 

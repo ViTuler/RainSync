@@ -95,6 +95,7 @@ map_groups:
   Test_Group:
     source: H:\test           # 要备份的源文件夹
     target: F:\test_mapping   # 备份目标文件夹
+    work_threaders: 5         # 并行复制线程数（默认 5）
 ```
 
 接受的写法：
@@ -123,9 +124,26 @@ map_groups:
 ### Map 备份行为
 
 * 仅当 `source` 中的文件在 `target` 缺失，或大小 / 最后写入时间不同时才复制（与 robocopy 默认行为一致）。未变化的文件直接跳过，不读取内容。
+* 嵌套目录在主线程扫描；文件复制由 `work_threaders` 个工作线程并行执行（默认 **5**，可在每个 map 组里配置）。
 * 复制是安全的：先写入目标目录中的临时文件，再替换到位。复制失败不会留下写了一半的文件。
 * `target` 不存在时会创建。
 * **不会**删除仅存在于 `target` 中的文件。
+
+## 打包
+
+在项目根目录执行：
+
+```text
+pyinstaller --noconfirm main.spec
+```
+
+**注意：** 打包时必须保留控制台。`main.spec` 里故意设置了 `console=True`，
+**不要**改成 `--noconsole` / `console=False`。
+
+* `sync`、`map` 以及前台 `watch` 需要控制台输出进度，并用 Ctrl+C 结束。
+* 使用 `--noconsole` 时，Windows 会把 exe 当成 GUI 程序：shell 可能立刻返回，
+  stdout/stderr 也会被丢弃，命令输出消失。
+* 后台模式（`watch -d` / `sync -d`）仍用 `CREATE_NO_WINDOW`，分离子进程不会再弹第二个控制台窗口。
 
 ## 日志
 

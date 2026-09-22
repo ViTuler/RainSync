@@ -62,6 +62,10 @@ class SyncStats:
         )
 
 
+#: Default worker-thread count for map copies when ``work_threaders`` is omitted.
+DEFAULT_MAP_WORK_THREADERS = 5
+
+
 @dataclass(frozen=True)
 class MapGroup:
     """One source -> target folder mapping used by the ``map`` command."""
@@ -69,6 +73,8 @@ class MapGroup:
     name: str
     source: Path
     target: Path
+    # How many worker threads copy files in parallel (robocopy-style map).
+    work_threaders: int = DEFAULT_MAP_WORK_THREADERS
 
 
 @dataclass
