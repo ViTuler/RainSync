@@ -1,84 +1,105 @@
-# synctool
+# RainSync
 
-A small local CLI for synchronizing shared tool folders across multiple local
-Python projects, and for backing up whole folders via one-way **map** groups.
+Local CLI for keeping shared folders in sync across multiple projects, and for one-way folder backups.
 
 中文版见 [README_zh.md](README_zh.md)。
 
-## Model
+**Current version:** `0.2.0` · CLI name: `synctool`
 
-**Sync groups** — projects in the same group are peers. There is no canonical
-source project. A file change in one project is propagated to the other
-projects of that group. During a full sync the most recently modified version
-of each file wins and is copied to every project that does not already hold
-identical content.
+## What it does
 
-**Map groups** — each group copies one `source` folder into a `target` folder
-(recursive backup). Like robocopy, only missing or changed files are copied
-(size or last-write time); files that only exist in the target are left alone
-(not a destructive mirror).
+| Feature | Behaviour |
+| ------- | --------- |
+| **Sync groups** | Projects in a group are peers. A change in one is copied to the others. On a full sync, identical content is filled in where missing; differing content is reported as a conflict. |
+| **Map groups** | One-way backup: copy `source` → `target`. Only missing or changed files are copied (size / mtime). Extra files in `target` are left alone. |
 
-## Project layout
+Typical uses: share a `.tools` / `utils` folder across several local repos, or periodically back up a working tree to another drive.
+
+## Requirements
+
+- Windows (primary; Paths and background mode are written for it)
+- Python 3.10+ (when running from source)
+- Dependencies: `ruamel.yaml`, `watchdog` (see `requirements.txt`)
+
+## Quick start (from source)
 
 ```text
-sync_tool.py / main.py   thin entry point  (python main.py <command>)
-synctool/                the package
-  __main__.py              python -m synctool
-  models.py                data structures (Project / Group / MapGroup / …)
-  ignore.py                gitignore-style ignore matching
-  logger.py                append-only log file writer (sync history)
-  config.py                YAML loading / validation / group selection
-  engine.py                sync engine (full scan + event propagation)
-  mapper.py                folder mapping / backup (map command)
-  watcher.py               watchdog wrapper with debounce (watch mode)
-  cli.py                   argument parsing and commands
-legacy/                  previous single-file implementation (reference only)
-tests/                   unit tests
+# 1. Clone and install deps (use a non-base conda env, or a venv)
+git clone https://github.com/ViTuler/RainSync.git
+cd RainSync
+pip install -r requirements.txt
+
+# 2. Create an example config next to the tool
+python main.py init
+
+# 3. Edit sync_config.yaml — set real project paths / map folders
+
+# 4. Dry-run, then sync / watch / map
+python main.py sync --dry-run
+python main.py sync
+python main.py watch -d
+python main.py map
 ```
+
+`python -m synctool <command>` is equivalent to `python main.py <command>`.
+
+## Quick start (Windows exe)
+
+1. Download `RainSync.exe` (or the build artifact) from the [GitHub Releases](https://github.com/ViTuler/RainSync/releases) page.
+2. Put the exe in a folder of your choice and run:
+
+```text
+RainSync.exe init
+```
+
+3. Edit the generated `sync_config.yaml` next to the exe, then:
+
+```text
+RainSync.exe sync --dry-run
+RainSync.exe sync
+RainSync.exe watch -d
+RainSync.exe map
+```
+
+Logs always go to `sync.log` next to the exe.
 
 ## Commands
 
 ```text
-python sync_tool.py sync
-python sync_tool.py sync -d              # sync once, then watch in the background
-python sync_tool.py sync -c my_config.yaml
-python sync_tool.py sync --dry-run
-python sync_tool.py watch
-python sync_tool.py watch -d             # watch in the background (no extra console)
-python sync_tool.py map                  # backup all map_groups
-python sync_tool.py map Test_Group       # backup one map group
-python sync_tool.py map --dry-run
-python sync_tool.py --version
-python sync_tool.py --help
+python main.py init                  # create example sync_config.yaml
+python main.py init -f               # overwrite existing config with the example
+python main.py sync                  # full sync once
+python main.py sync -d               # sync once, then watch in the background
+python main.py sync -c my.yaml
+python main.py sync --dry-run
+python main.py watch                 # watch in this console (Ctrl+C to stop)
+python main.py watch -d              # watch as a detached background process
+python main.py map                   # backup all map groups
+python main.py map Test_Group        # backup one map group
+python main.py map --dry-run
+python main.py --version
+python main.py --help
 ```
 
-`python -m synctool <command>` is equivalent. When `-c/--config` is omitted
-the tool looks for `sync_config.yaml` in this order:
+When `-c/--config` is omitted, the tool looks for `sync_config.yaml` in this order:
 
 1. the **working folder** (where you ran the command);
-2. the **tool folder** (next to the executable, or the project root when run
-   from source).
+2. the **tool folder** (next to the executable, or the project root when run from source).
 
-When neither location has a config, one is created next to the tool. The log
-is **always** written to `sync.log` next to the tool, no matter where you run
-it from.
+If neither has a config, one is created next to the tool. The log is **always** written to `sync.log` next to the tool.
 
 ```text
-A\sync_tool.exe        <- tool folder: config is created here, log always here
+A\RainSync.exe         <- tool folder: config is created here, log always here
 B\                     <- run from here: a sync_config.yaml in B takes priority
 ```
 
 ### Background watching (`watch -d`)
 
-`watch -d` re-launches the watcher as a **detached background process** and
-returns to the shell immediately.
+`watch -d` re-launches the watcher as a **detached background process** and returns to the shell immediately.
 
-* **Multiple instances** — starting `watch -d` again does not stop or block
-  an already running watcher. Each `-d` launch is its own process.
-* **Console vs windowed builds** — in a normal console build the PID / warning
-  messages are printed to the console. In a windowed (`--noconsole`) build they
-  are shown as a Windows message box, because there is no console to print to.
-* To stop it: `taskkill /IM <exe-name> /F` (kills all instances of the exe).
+* Starting `watch -d` again does **not** stop an already running watcher — each `-d` launch is its own process.
+* Console builds print PID / warnings to the terminal; windowed (`--noconsole`) builds show a Windows message box.
+* To stop: `taskkill /IM <exe-name> /F` (ends **all** instances of that exe).
 
 ## Configuration
 
@@ -122,61 +143,32 @@ Accepted spellings:
 
 ### auto_walk
 
-| value      | meaning                                          |
-| ---------- | ------------------------------------------------ |
-| `false` / missing | only the project root is checked       |
-| `3`        | search up to 3 folder levels below the project   |
-| `true`     | search the whole project tree                    |
+| value | meaning |
+| ----- | ------- |
+| `false` / missing | only the project root is checked |
+| `3` | search up to 3 folder levels below the project |
+| `true` | search the whole project tree |
 
 ### allow_delete / init_sync
 
-* `allow_delete: true` propagates filesystem deletions in watch mode. A full
-  sync never guesses that a missing file was deleted on purpose — peers have
-  equal authority, so that decision is left to the user.
-* `init_sync: true` makes `watch` run a full synchronize before it starts
-  observing changes, so new projects converge immediately.
+* `allow_delete: true` propagates filesystem deletions in watch mode. A full sync never treats a missing file as an intentional delete — peers have equal authority.
+* `init_sync: true` makes `watch` run a full synchronize before observing changes, so new projects converge immediately.
 
 ### Conflicts
 
-During a full sync, if the same relative file exists in several projects with
-different contents, the tool reports a **conflict** instead of guessing a
-winner.
+During a full sync, if the same relative file exists in several projects with **different contents**, the tool reports a **conflict** and does not pick a winner. Resolve it manually (or via watch after you edit one side), then sync again.
 
 ### Map backup behaviour
 
-* Copies a file under `source` into `target` only when it is missing, or when
-  its size or last-write time differs (robocopy default). Unchanged files are
-  skipped without reading their contents.
-* Nested folders are scanned on the main thread; file copies run on
-  ``work_threaders`` workers (default **5**, set per map group).
-* The copy is safe: written to a temp file in the destination folder, then
-  swapped into place. A failed copy does not leave a half-written file.
+* Copies a file under `source` into `target` only when it is missing, or when size or last-write time differs. Unchanged files are skipped without reading contents.
+* Nested folders are scanned on the main thread; file copies use `work_threaders` workers (default **5**).
+* Copies go to a temp file in the destination, then swap into place — a failed copy does not leave a half-written file.
 * Creates `target` when it does not exist.
 * Does **not** delete files that exist only in `target`.
 
-## Packaging
-
-Build from the project root:
-
-```text
-pyinstaller --noconfirm main.spec
-```
-
-**Attention:** keep the console subsystem on. `main.spec` sets `console=True` on
-purpose — do **not** switch to `--noconsole` / `console=False`.
-
-* `sync`, `map`, and foreground `watch` need a console for progress output and
-  Ctrl+C.
-* With `--noconsole`, Windows treats the exe as a GUI app: the shell may return
-  immediately, and stdout/stderr are dropped so command output disappears.
-* Background mode (`watch -d` / `sync -d`) still uses `CREATE_NO_WINDOW` so the
-  detached child does not open a second console window.
-
 ## Logging
 
-Every operation is appended to a single `sync.log` file, always located next
-to the tool itself (the folder holding the executable, or the project root
-when run from source). Lines are pipe-separated:
+Every operation is appended to `sync.log` next to the tool. Lines are pipe-separated:
 
 ```text
 2026-09-05 10:20:42 | WATCH_START
@@ -189,9 +181,42 @@ when run from source). Lines are pipe-separated:
 2026-09-18 14:50:02 | MAP_DONE | Test_Group | copied=12 skipped=3 dirs=4 errors=0
 ```
 
-## YAML comments and formatting
+## Build a Windows executable
 
-The configuration is parsed with `ruamel.yaml` in round-trip mode with
-`preserve_quotes=True`, so comments, ordering, and quotes are preserved if the
-file is ever rewritten later. The current commands only read the config and
-never rewrite it.
+From the project root (with PyInstaller installed in your active env):
+
+```text
+pyinstaller --noconfirm main.spec
+```
+
+Output: `dist/main.exe` (rename to `RainSync.exe` if you like before uploading to a release).
+
+**Keep the console subsystem on.** `main.spec` sets `console=True` on purpose — do **not** switch to `--noconsole` / `console=False`.
+
+* `sync`, `map`, and foreground `watch` need a console for progress and Ctrl+C.
+* With `--noconsole`, Windows treats the exe as a GUI app: the shell may return immediately and stdout/stderr are dropped.
+* Background mode (`watch -d` / `sync -d`) still uses `CREATE_NO_WINDOW` so the detached child does not open a second console.
+
+## Project layout
+
+```text
+main.py                  thin entry point  (python main.py <command>)
+synctool/                package
+  __main__.py              python -m synctool
+  models.py                data structures
+  ignore.py                gitignore-style ignore matching
+  logger.py                append-only sync history log
+  config.py                YAML load / validate / group selection
+  engine.py                sync engine
+  mapper.py                map / backup
+  watcher.py               watchdog + debounce
+  cli.py                   commands
+legacy/                  previous single-file implementation (reference only)
+tests/                   unit tests
+requirements.txt
+main.spec                PyInstaller spec
+```
+
+## YAML notes
+
+Config is parsed with `ruamel.yaml` in round-trip mode (`preserve_quotes=True`), so comments, ordering, and quotes are preserved if the file is rewritten later. Current commands only **read** the config and never rewrite it.
