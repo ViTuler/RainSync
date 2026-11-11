@@ -133,6 +133,9 @@ map_groups:
     source: H:\test           # folder to back up
     target: F:\test_mapping   # destination folder
     work_threaders: 5         # parallel copy workers (default: 5)
+    # ignore:                 # optional extras; use !pattern to re-include a built-in skip
+    #   - "*.log"
+    #   - "!target/"
 ```
 
 Accepted spellings:
@@ -165,6 +168,21 @@ During a full sync, if the same relative file exists in several projects with **
 * Copies go to a temp file in the destination, then swap into place — a failed copy does not leave a half-written file.
 * Creates `target` when it does not exist.
 * Does **not** delete files that exist only in `target`.
+* While scanning, **automatically prunes** common-language cache/dependency dirs (JS, Python, Rust, Java, C++; does not descend into them). Packaging/output dirs such as `build/`, `dist/`, `.output/`, `out/` are **not** skipped by default. Add more with `ignore`, or force-include a built-in skip with `!pattern` (e.g. `!target/`).
+
+#### Built-in map cache skips
+
+Only the common stacks below. Patterns use gitignore-style rules (any depth; trailing `/` means directory-only):
+
+| Ecosystem | Skipped by default |
+| --------- | ------------------ |
+| JS / TS / Node | `node_modules/`, `bower_components/`, `.npm/`, `.yarn/cache/`, `.yarn/unplugged/`, `.pnpm-store/` |
+| Python | `__pycache__/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `.tox/`, `.nox/`, `.hypothesis/`, `.eggs/`, `*.egg-info/`, `.venv/`, `venv/` |
+| Rust | `target/` (Cargo; Maven often uses the same name) |
+| Java | `.gradle/`, `.mvn/` |
+| C / C++ | `CMakeFiles/`, `cmake-build-debug/`, `cmake-build-release/`, `cmake-build-*/`, `.cxx/` |
+
+The full tuple lives in `synctool/models.py` as `DEFAULT_MAP_CACHE_IGNORES`.
 
 ## Logging
 

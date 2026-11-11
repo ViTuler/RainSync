@@ -22,8 +22,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from threading import Lock
 
+from .ignore import IgnoreMatcher
 from .logger import NullLogger, timestamp
-from .models import MapGroup, MapStats
+from .models import DEFAULT_MAP_CACHE_IGNORES, MapGroup, MapStats
 
 TEMP_SUFFIX = ".map_tmp"
 
@@ -166,6 +167,52 @@ class MapEngine:
                 if self.verbose:
                     self._say("DIR", rel)
 
+    def _matcher(self) -> IgnoreMatcher:
+        """Built-in language caches plus optional map-group ignore patterns."""
+        return IgnoreMatcher((*DEFAULT_MAP_CACHE_IGNORES, *self.group.ignore))
+
+    def _collect_tree(
+        self, source: Path, target: Path
+    ) -> tuple[list[tuple[Path, str]], list[tuple[Path, Path, str]]]:
+        """Walk ``source``, pruning cache / ignored dirs so they are not scanned."""
+        matcher = self._matcher()
+        dirs: list[tuple[Path, str]] = []
+        files: list[tuple[Path, Path, str]] = []
+
+        for root, dirnames, filenames in os.walk(source, topdown=True):
+            root_path = Path(root)
+            dirnames.sort()
+            filenames.sort()
+
+            kept_dirs: list[str] = []
+            for name in dirnames:
+                path = root_path / name
+                try:
+                    rel = path.relative_to(source).as_posix()
+                except ValueError:
+                    continue
+                if matcher.ignored(rel, is_dir=True):
+                    continue
+                kept_dirs.append(name)
+                dirs.append((target / rel, rel))
+            dirnames[:] = kept_dirs
+
+            for name in filenames:
+                if name.endswith(TEMP_SUFFIX):
+                    continue
+                path = root_path / name
+                if not path.is_file():
+                    continue
+                try:
+                    rel = path.relative_to(source).as_posix()
+                except ValueError:
+                    continue
+                if matcher.ignored(rel, is_dir=False):
+                    continue
+                files.append((path, target / rel, rel))
+
+        return dirs, files
+
     def map(self) -> MapStats:
         """Backup changed files from ``source`` into ``target``."""
         source = self.group.source
@@ -181,25 +228,7 @@ class MapEngine:
         if not self.dry_run:
             target.mkdir(parents=True, exist_ok=True)
 
-        dirs: list[tuple[Path, str]] = []
-        files: list[tuple[Path, Path, str]] = []
-
-        for path in sorted(source.rglob("*")):
-            try:
-                rel = path.relative_to(source).as_posix()
-            except ValueError:
-                continue
-
-            destination = target / rel
-
-            if path.is_dir():
-                dirs.append((destination, rel))
-                continue
-
-            if not path.is_file() or path.name.endswith(TEMP_SUFFIX):
-                continue
-
-            files.append((path, destination, rel))
+        dirs, files = self._collect_tree(source, target)
 
         self._create_dirs(dirs, stats)
 

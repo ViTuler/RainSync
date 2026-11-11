@@ -13,7 +13,13 @@ from typing import Any, Iterable
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
-from .models import DEFAULT_MAP_WORK_THREADERS, Group, MapGroup, Project, SyncError
+from .models import (
+    DEFAULT_MAP_WORK_THREADERS,
+    Group,
+    MapGroup,
+    Project,
+    SyncError,
+)
 from .paths import DEFAULT_CONFIG_NAME, app_config_path, resolve_config_path
 
 DEFAULT_INTERVAL = 0.3
@@ -193,11 +199,16 @@ class Config:
                 f"Map group '{name}': 'work_threaders' must be >= 1, got {work_threaders}"
             )
 
+        ignore = tuple(
+            _as_string_list(raw.get("ignore"), f"Map group '{name}' ignore")
+        )
+
         return MapGroup(
             name=name,
             source=Path(source).expanduser().resolve(),
             target=Path(target).expanduser().resolve(),
             work_threaders=work_threaders,
+            ignore=ignore,
         )
 
     # ------------------------------------------------------------ selection
@@ -348,12 +359,18 @@ groups:
     watch:
       interval: 0.3
 
-# Optional: map groups backup a source folder into a target folder
+# Optional: map groups backup a source folder into a target folder.
+# Built-in skips: JS/Python/Rust/Java/C++ caches only (node_modules/,
+# __pycache__/, target/, .gradle/, CMakeFiles/, …). Not build/dist/.output.
+# Extra ignore patterns are optional; use !pattern to re-include a default skip.
 map_groups:
   example_map:
     source: ~/backups/source_folder
     target: ~/backups/mapped_folder
     work_threaders: 5   # parallel copy workers (default: 5)
+    # ignore:
+    #   - "*.log"
+    #   - "!target/"
 """
 
 

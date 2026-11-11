@@ -65,6 +65,45 @@ class SyncStats:
 #: Default worker-thread count for map copies when ``work_threaders`` is omitted.
 DEFAULT_MAP_WORK_THREADERS = 5
 
+#: Language / toolchain cache dirs always skipped during ``map`` walks.
+#: Only common stacks: JS, Python, Rust, Java, C++. Packaging / release
+#: output dirs (``build/``, ``dist/``, ``.output/``, ``out/``, …) are *not*
+#: skipped by default — add them via map-group ``ignore`` if needed.
+#: Matched gitignore-style at any depth; trailing ``/`` means directory-only.
+#: Negate in a map group's ``ignore`` list (e.g. ``!target/``) to force include.
+DEFAULT_MAP_CACHE_IGNORES: tuple[str, ...] = (
+    # JavaScript / TypeScript / Node (deps + package-manager caches)
+    "node_modules/",
+    "bower_components/",
+    ".npm/",
+    ".yarn/cache/",
+    ".yarn/unplugged/",
+    ".pnpm-store/",
+    # Python (bytecode, tool caches, virtualenvs)
+    "__pycache__/",
+    ".pytest_cache/",
+    ".mypy_cache/",
+    ".ruff_cache/",
+    ".tox/",
+    ".nox/",
+    ".hypothesis/",
+    ".eggs/",
+    "*.egg-info/",
+    ".venv/",
+    "venv/",
+    # Rust / Cargo (+ Maven shares the same ``target/`` name)
+    "target/",
+    # Java / Gradle / Maven wrapper cache
+    ".gradle/",
+    ".mvn/",
+    # C / C++ (CMake generated trees)
+    "CMakeFiles/",
+    "cmake-build-debug/",
+    "cmake-build-release/",
+    "cmake-build-*/",
+    ".cxx/",
+)
+
 
 @dataclass(frozen=True)
 class MapGroup:
@@ -75,6 +114,8 @@ class MapGroup:
     target: Path
     # How many worker threads copy files in parallel (robocopy-style map).
     work_threaders: int = DEFAULT_MAP_WORK_THREADERS
+    # Extra ignore patterns (gitignore-style), combined with DEFAULT_MAP_CACHE_IGNORES.
+    ignore: tuple[str, ...] = ()
 
 
 @dataclass

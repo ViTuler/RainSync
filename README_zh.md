@@ -133,6 +133,9 @@ map_groups:
     source: H:\test           # 要备份的源文件夹
     target: F:\test_mapping   # 备份目标文件夹
     work_threaders: 5         # 并行复制线程数（默认 5）
+    # ignore:                 # 可选：额外忽略；用 !pattern 可重新包含内置跳过项
+    #   - "*.log"
+    #   - "!target/"
 ```
 
 接受的写法：
@@ -165,6 +168,21 @@ map_groups:
 * 复制是安全的：先写入目标目录中的临时文件，再替换到位。复制失败不会留下写了一半的文件。
 * `target` 不存在时会创建。
 * **不会**删除仅存在于 `target` 中的文件。
+* 扫描时**自动剪枝**常用语言的缓存 / 依赖目录（JS、Python、Rust、Java、C++；不会进入这些目录）。打包产物目录（如 `build/`、`dist/`、`.output/`、`out/`）**不会**默认跳过。可用 `ignore` 追加规则；用 `!pattern`（如 `!target/`）强制重新包含某项。
+
+#### Map 内置跳过的缓存目录
+
+仅覆盖常用栈。匹配规则与 gitignore 相同（任意深度；以 `/` 结尾表示只匹配目录）：
+
+| 生态 | 默认跳过 |
+| ---- | -------- |
+| JS / TS / Node | `node_modules/`、`bower_components/`、`.npm/`、`.yarn/cache/`、`.yarn/unplugged/`、`.pnpm-store/` |
+| Python | `__pycache__/`、`.pytest_cache/`、`.mypy_cache/`、`.ruff_cache/`、`.tox/`、`.nox/`、`.hypothesis/`、`.eggs/`、`*.egg-info/`、`.venv/`、`venv/` |
+| Rust | `target/`（Cargo；Maven 也常用同名目录） |
+| Java | `.gradle/`、`.mvn/` |
+| C / C++ | `CMakeFiles/`、`cmake-build-debug/`、`cmake-build-release/`、`cmake-build-*/`、`.cxx/` |
+
+完整列表见源码 `synctool/models.py` 中的 `DEFAULT_MAP_CACHE_IGNORES`。
 
 ## 日志
 
