@@ -15,6 +15,6 @@ This package is organised in small, single-purpose layers:
 Run it with ``python -m synctool`` or through the ``sync_tool.py`` shim.
 """
 
-__version__ = "0.2.0"
+__version__ = "1.0.2"
 
 from .models import Group, MapGroup, MapStats, Project, SyncError, SyncStats  # noqa: F401

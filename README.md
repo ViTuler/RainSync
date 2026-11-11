@@ -4,7 +4,7 @@ Local CLI for keeping shared folders in sync across multiple projects, and for o
 
 中文版见 [README_zh.md](README_zh.md)。
 
-**Current version:** `0.2.0` · CLI name: `synctool`
+**Current version:** `1.0.2` · CLI name: `synctool`
 
 ## What it does
 
